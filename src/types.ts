@@ -1,5 +1,7 @@
 import { MatrixClient } from "matrix-bot-sdk"
 import { Probot } from "probot"
+import { EmitterWebhookEventName as WebhookEvents } from "@octokit/webhooks/dist-types/types"
+import type { WebhookEventMap } from "@octokit/webhooks-types";
 
 import type { AccessDB, TaskDB } from "./db"
 import { Logger } from "./logger"
@@ -82,3 +84,21 @@ export class PullRequestError {
 }
 
 export type GetCommandOptions = { baseEnv: Record<string, string> }
+
+export type Octokit = Awaited<ReturnType<Probot["auth"]>>
+
+export type ProbotOnEvents = Exclude<
+  keyof WebhookEventMap,
+  | "branch_protection_rule"
+  | "branch_protection_rule.created"
+  | "branch_protection_rule.deleted"
+  | "branch_protection_rule.edited"
+  | "pull_request_review_thread"
+  | "pull_request_review_thread.resolved"
+  | "pull_request_review_thread.unresolved"
+  | "workflow_job"
+  | "workflow_job.completed"
+  | "workflow_job.in_progress"
+  | "workflow_job.queued"
+  | "workflow_job.started"
+>

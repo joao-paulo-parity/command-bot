@@ -1,5 +1,5 @@
 import { RequestError } from "@octokit/request-error"
-import { Octokit } from "@octokit/rest"
+import { Octokit } from "src/types"
 import { EndpointInterface, Endpoints, RequestInterface } from "@octokit/types"
 
 import { Logger } from "./logger"

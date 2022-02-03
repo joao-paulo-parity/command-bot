@@ -1,6 +1,10 @@
-import { Octokit } from "@octokit/rest"
+import { Octokit, ProbotOnEvents } from "src/types"
 import { EmitterWebhookEvent as WebhookEvent } from "@octokit/webhooks"
-import { EmitterWebhookEventName as WebhookEvents } from "@octokit/webhooks/dist-types/types"
+import {
+  EmitterWebhookEvent,
+  EmitterWebhookEventName as WebhookEvents,
+  HandlerFunction,
+} from "@octokit/webhooks/dist-types/types"
 import { Mutex } from "async-mutex"
 import path from "path"
 import { Probot } from "probot"
@@ -27,13 +31,14 @@ import { Logger } from "./logger"
 import { PullRequestError, PullRequestTask, State } from "./types"
 import { displayCommand, getCommand, getLines, getParsedArgs } from "./utils"
 
-type WebhookHandler<E extends WebhookEvents> = (
-  event: {
-    octokit: ExtendedOctokit
-  } & WebhookEvent<E>,
-) => Promise<PullRequestError | void> | PullRequestError | void
+type WebhookHandler<E extends ProbotOnEvents> = (data: {
+  octokit: ExtendedOctokit
+  event: Parameters<HandlerFunction<E, unknown>>[0]
+}) => Promise<PullRequestError | void> | PullRequestError | void
 
-export const setupEvent = function <E extends WebhookEvents>(
+
+//on: <E extends EmitterWebhookEventName>(event: E | E[], callback: HandlerFunction<E, TTransformed>) => void;
+export const setupEvent = function <E extends ProbotOnEvents>(
   bot: Probot,
   event: E,
   handler: WebhookHandler<E>,
@@ -42,14 +47,10 @@ export const setupEvent = function <E extends WebhookEvents>(
   bot.on(event, async function (data) {
     const installationId: number | undefined = (data.payload as any)
       .installation?.id
-    const octokit = getOctokit(
-      await (bot.auth as (installationId?: number) => Promise<Octokit>)(
-        installationId,
-      ),
-    )
+    const octokit = getOctokit(await bot.auth(installationId))
 
     try {
-      const result = await handler({ ...data, octokit })
+      const result = await handler({ event: data, octokit })
       if (result instanceof PullRequestError) {
         const {
           params: { pull_number, ...params },

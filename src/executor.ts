@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest"
+import { Octokit } from "src/types"
 import { Mutex } from "async-mutex"
 import cp from "child_process"
 import fs from "fs"
@@ -639,9 +639,7 @@ export const requeueUnterminated = async function (state: State) {
           case "PullRequestTask": {
             const { owner, repo, pull_number, commentId, requester } = taskData
 
-            const octokit = await (
-              bot.auth as (installationId?: number) => Promise<Octokit>
-            )(taskData.installationId)
+            const octokit = await bot.auth(taskData.installationId)
 
             const announceCancel = function (message: string) {
               return updateComment(octokit, {
