@@ -28,9 +28,8 @@ import { PullRequestError, PullRequestTask, State } from "./types"
 import { displayCommand, getCommand, getLines, getParsedArgs } from "./utils"
 
 type WebhookHandler<E extends WebhookEvents> = (
-  event: {
-    octokit: ExtendedOctokit
-  } & WebhookEvent<E>,
+  octokit: ExtendedOctokit,
+  event: WebhookEvent<E>,
 ) => Promise<PullRequestError | void> | PullRequestError | void
 
 export const setupEvent = function <E extends WebhookEvents>(
@@ -49,7 +48,7 @@ export const setupEvent = function <E extends WebhookEvents>(
     )
 
     try {
-      const result = await handler({ ...data, octokit })
+      const result = await handler(octokit, data)
       if (result instanceof PullRequestError) {
         const {
           params: { pull_number, ...params },
@@ -110,7 +109,7 @@ export const getWebhooksHandlers = function (state: State) {
   }
 
   const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> =
-    function ({ payload, octokit }) {
+    function (octokit, { payload }) {
       // Note: async-mutex implements a "fair mutex" which means requests will be
       // queued in the same order as they're received; if changing to a different
       // library then verify that this aspect is maintained.
@@ -120,8 +119,7 @@ export const getWebhooksHandlers = function (state: State) {
 
         if (
           !requester ||
-          // eslint-disable-next-line no-prototype-builtins
-          !issue.hasOwnProperty("pull_request") ||
+          !("pull_request" in issue) ||
           payload.action !== "created" ||
           comment.user?.type !== "User"
         ) {
