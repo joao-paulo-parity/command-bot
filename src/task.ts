@@ -1,5 +1,5 @@
 import assert from "assert"
-import { Mutex } from "async-mutex"
+import { Mutex, Semaphore, SemaphoreInterface } from "async-mutex"
 import cp from "child_process"
 import { randomUUID } from "crypto"
 import { parseISO } from "date-fns"
@@ -14,7 +14,7 @@ import { getDeploymentsLogsMessage, prepareBranch } from "./core"
 import { getPostPullRequestResult, updateComment } from "./github"
 import { Logger } from "./logger"
 import { getShellCommandExecutor } from "./shell"
-import { CommandOutput, Context, GitRef } from "./types"
+import { CommandExecutor, CommandOutput, Context, GitRef } from "./types"
 import {
   displayDuration,
   displayError,
@@ -39,17 +39,28 @@ type TaskBase<T> = {
   requester: string
 }
 
-export type PullRequestTask = TaskBase<"PullRequestTask"> & {
+type PullRequestTaskCommonParts = {
   commentId: number
   installationId: number
   gitRef: GitRef & { prNumber: number }
 }
 
+export type PullRequestTask = TaskBase<"PullRequestTask"> &
+  PullRequestTaskCommonParts
+
+export type PullRequestCiRunnerTask = TaskBase<"PullRequestCiRunnerTask"> &
+  PullRequestTaskCommonParts & {
+    pipeline: {
+      id: number
+      project_id: number
+    } | null
+  }
+
 export type ApiTask = TaskBase<"ApiTask"> & {
   matrixRoom: string
 }
 
-export type Task = PullRequestTask | ApiTask
+export type Task = PullRequestTask | ApiTask | PullRequestCiRunnerTask
 
 export const queuedTasks: Map<
   string,
@@ -68,7 +79,8 @@ export const parseTaskQueuedDate = (str: string) => {
   return parseISO(str)
 }
 
-const taskQueueMutex = new Mutex()
+const ciRunnerExecutionQueueMutex = new Semaphore(4)
+const localExecutionQueueMutex = new Mutex()
 export const queueTask = async (
   parentCtx: Context,
   task: Task,
@@ -87,6 +99,37 @@ export const queueTask = async (
     ...parentCtx,
     logger: parentCtx.logger.child({ taskId: task.id }),
   }
+
+  const { taskQueueMutex, runTaskCommand, cancelTaskCommand } = (() => {
+    switch (task.tag) {
+      case "PullRequestTask":
+      case "ApiTask": {
+        return {
+          taskQueueMutex: localExecutionQueueMutex,
+          runTaskCommand: getShellCommandExecutor(ctx, {
+            projectsRoot: repositoryCloneDirectory,
+            onChild: (createdChild) => {
+              taskProcess = createdChild
+            },
+          }),
+          cancelTaskCommand: null
+        }
+      }
+      case "PullRequestCiRunnerTask": {
+        const ciRunnerExecCtx = getCiRunnerExecutionContext(ctx)
+        return {
+          taskQueueMutex: ciRunnerExecutionQueueMutex,
+          runTaskCommand: ciRunnerExecCtx.runTaskCommand,
+          cancelTaskCommand: ciRunnerExecCtx.cancelTaskCommand,
+        }
+      }
+      default: {
+        const exhaustivenessCheck: never = task
+        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        throw new Error(`Not exhaustive: ${exhaustivenessCheck}`)
+      }
+    }
+  })()
 
   let taskProcess: cp.ChildProcess | undefined = undefined
   let taskIsAlive = true
