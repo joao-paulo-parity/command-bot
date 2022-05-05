@@ -184,7 +184,7 @@ export const queueTask = async (
         },
       })
 
-      const prepare = prepareBranch(ctx, task, {
+      const prepareBranchSteps = prepareBranch(ctx, task, {
         getFetchEndpoint: () => {
           return getFetchEndpoint(
             "installationId" in task ? task.installationId : null,
@@ -192,7 +192,7 @@ export const queueTask = async (
         },
       })
       while (taskIsAlive) {
-        const next = await prepare.next()
+        const next = await prepareBranchSteps.next()
         if (next.done) {
           break
         }
