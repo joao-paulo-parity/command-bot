@@ -15,6 +15,7 @@ import {
   getPostPullRequestResult,
   updateComment,
 } from "./github"
+import { runCommandInGitlabPipeline } from "./gitlab"
 import { Logger } from "./logger"
 import { ShellExecutor } from "./shell"
 import { CommandExecutor, CommandOutput, Context, GitRef } from "./types"
@@ -215,7 +216,15 @@ export const queueTask = async (
           return cancelledMessage
         }
 
-        pipelineCtx = await runCommandInGitlabPipeline(execPath, args, task)
+        pipelineCtx = await runCommandInGitlabPipeline(
+          ctx,
+          task,
+          {
+            image: "paritytech/ci-linux:production",
+            tags: ["linux-docker-benches", "linux-docker"],
+          },
+          { branchPrefix: "try-runtime" },
+        )
 
         task.gitlab = {
           pipeline: {

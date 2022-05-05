@@ -213,11 +213,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           requester,
           execPath,
           args,
-          env: {
-            ...command.env,
-            CARGO_TERM_COLOR: "never",
-            ...(cargoTargetDir ? { CARGO_TARGET_DIR: cargoTargetDir } : {}),
-          },
+          env: command.env,
           commentId,
           installationId,
           gitRef: {

@@ -29,6 +29,12 @@ export type Context = {
   nodesAddresses: Record<string, string>
   shouldPostPullRequestComment: boolean
   cargoTargetDir: string | undefined
+  gitlab: {
+    accessToken: string
+    domain: string
+    pushNamespace: string
+    branchPrefix: string
+  }
 }
 
 export class PullRequestError {
