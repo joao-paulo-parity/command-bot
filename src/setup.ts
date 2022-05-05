@@ -32,6 +32,7 @@ export const setup = async (
     nodesAddresses,
     masterToken,
     shouldClearTaskDatabaseOnStart,
+    gitlab,
   }: Pick<
     Context,
     | "deployment"
@@ -39,6 +40,7 @@ export const setup = async (
     | "allowedOrganizations"
     | "nodesAddresses"
     | "masterToken"
+    | "gitlab"
   > & {
     appId: number
     clientId: string
@@ -145,6 +147,7 @@ export const setup = async (
     startDate,
     shouldPostPullRequestComment,
     cargoTargetDir: process.env.CARGO_TARGET_DIR,
+    gitlab,
   }
 
   void requeueUnterminatedTasks(ctx, bot)

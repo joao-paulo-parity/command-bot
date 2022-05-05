@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 import yaml from "yaml"
-import { Task } from "./task"
+import { Task, TaskGitlabContext } from "./task"
 import { Context } from "./types"
 import path from "path"
 import { fsWriteFile, ShellExecutor } from "./shell"
@@ -81,7 +81,65 @@ export const runCommandInGitlabPipeline = async (
   ).json()) as unknown as {
     id: number
     project_id: number
+    web_url: string
   }
 
-  return { id: createdPipeline.id, projectId: createdPipeline.project_id }
+  return getTaskGitlabContext(ctx, {
+    pipeline: {
+      id: createdPipeline.id,
+      projectId: createdPipeline.project_id,
+      status: "pending",
+      webUrl: createdPipeline.web_url,
+    },
+  })
+}
+
+const cancelGitlabPipeline = async (
+  { gitlab }: Context,
+  { id, projectId }: { id: number; projectId: number },
+) => {
+  const response = await fetch(
+    `https://${gitlab.domain}/api/v4/projects/${projectId}/pipeline/${id}/cancel`,
+    { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
+  )
+
+  if (response.ok) {
+    return
+  }
+
+  return new Error(await response.text())
+}
+
+export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
+  if (!task.gitlab) {
+    return
+  }
+
+  const { gitlab } = ctx
+
+  const { pipeline } = task.gitlab
+  const { status: pipelineStatus } = (await (
+    await fetch(
+      `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
+      { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
+    )
+  ).json()) as { status: string }
+  switch (pipelineStatus) {
+    case "canceled":
+    case "failed": {
+      return null
+    }
+  }
+
+  return getTaskGitlabContext(ctx, task.gitlab)
+}
+
+export const getTaskGitlabContext = async (
+  ctx: Context,
+  taskGitlabContext: TaskGitlabContext,
+): Promise<TaskGitlabContext & { terminate: () => Promise<boolean> }> => {
+  return {
+    ...taskGitlabContext,
+    terminate: () => cancelGitlabPipeline(ctx, taskGitlabContext.pipeline),
+  }
 }

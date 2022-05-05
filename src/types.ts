@@ -33,7 +33,6 @@ export type Context = {
     accessToken: string
     domain: string
     pushNamespace: string
-    branchPrefix: string
   }
 }
 

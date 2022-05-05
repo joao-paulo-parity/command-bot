@@ -205,6 +205,10 @@ const main = async () => {
   }
   logger.info(nodesAddresses, "Registered nodes addresses")
 
+  const gitlabAccessToken = envVar("GITLAB_ACCESS_TOKEN")
+  const gitlabDomain = envVar("GITLAB_DOMAIN")
+  const gitlabPushNamespace = envVar("GITLAB_PUSH_NAMESPACE")
+
   await server.load((probot) => {
     void setup(probot, server, {
       appId,
@@ -222,6 +226,11 @@ const main = async () => {
       nodesAddresses,
       masterToken,
       shouldClearTaskDatabaseOnStart,
+      gitlab: {
+        accessToken: gitlabAccessToken,
+        domain: gitlabDomain,
+        pushNamespace: gitlabPushNamespace,
+      },
     })
   })
 
