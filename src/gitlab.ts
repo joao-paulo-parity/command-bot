@@ -1,9 +1,11 @@
+import EventEmitter from "events"
 import fetch from "node-fetch"
+import path from "path"
 import yaml from "yaml"
+
+import { CommandRunner, fsWriteFile } from "./shell"
 import { Task, TaskGitlabContext } from "./task"
 import { Context } from "./types"
-import path from "path"
-import { fsWriteFile, ShellExecutor } from "./shell"
 
 type GitlabJobOptions = {
   image: string
@@ -33,7 +35,7 @@ export const runCommandInGitlabPipeline = async (
   )
 
   const { gitlab } = ctx
-  const { run } = new ShellExecutor(ctx, {
+  const cmdRunner = new CommandRunner(ctx, {
     itemsToRedact: [gitlab.accessToken],
     shouldTrackProgress: false,
     cwd: task.repoPath,
@@ -42,34 +44,34 @@ export const runCommandInGitlabPipeline = async (
   const branchName = `${branchPrefix}/${
     "prNumber" in task.gitRef ? task.gitRef.prNumber : task.gitRef.branch
   }`
-  await run("git", ["branch", "-D", branchName], {
+  await cmdRunner.run("git", ["branch", "-D", branchName], {
     testAllowedErrorMessage: (err) => {
       return err.endsWith("not found.")
     },
   })
-  await run("git", ["checkout", "-b", branchName])
+  await cmdRunner.run("git", ["checkout", "-b", branchName])
 
-  await run("git", ["add", ".gitlab-ci.yml"])
+  await cmdRunner.run("git", ["add", ".gitlab-ci.yml"])
 
-  await run("git", ["commit", "-m", "generate GitLab CI"])
+  await cmdRunner.run("git", ["commit", "-m", "generate GitLab CI"])
 
   const gitlabRemote = "gitlab"
   const gitlabProjectPath = `${gitlab.pushNamespace}/${task.gitRef.repo}`
 
-  await run("git", ["remote", "remove", gitlabRemote], {
+  await cmdRunner.run("git", ["remote", "remove", gitlabRemote], {
     testAllowedErrorMessage: (err) => {
       return err.includes("No such remote:")
     },
   })
 
-  await run("git", [
+  await cmdRunner.run("git", [
     "remote",
     "add",
     gitlabRemote,
     `https://token:${gitlab.accessToken}@${gitlab.domain}/${gitlabProjectPath}.git`,
   ])
 
-  await run("git", ["push", "-o", "ci.skip", gitlabRemote, "HEAD"])
+  await cmdRunner.run("git", ["push", "-o", "ci.skip", gitlabRemote, "HEAD"])
 
   const createdPipeline = (await (
     await fetch(
@@ -84,7 +86,7 @@ export const runCommandInGitlabPipeline = async (
     web_url: string
   }
 
-  return getTaskGitlabContext(ctx, {
+  return getLiveTaskGitlabContext(ctx, {
     pipeline: {
       id: createdPipeline.id,
       projectId: createdPipeline.project_id,
@@ -131,50 +133,63 @@ export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
     }
   }
 
-  return getTaskGitlabContext(ctx, task.gitlab)
+  return getLiveTaskGitlabContext(ctx, task.gitlab)
 }
 
-export const getTaskGitlabContext = async (
+const getLiveTaskGitlabContext = (
   ctx: Context,
-  taskGitlabContext: TaskGitlabContext,
-): Promise<
-  TaskGitlabContext & {
-    terminatePipeline: () => Promise<Error | void>
-    waitUntilPipelineFinished: () => Promise<string | Error>
-  }
-> => {
+  taskGitlabCtx: TaskGitlabContext,
+): TaskGitlabContext & {
+  terminate: () => Promise<Error | undefined>
+  waitUntilFinished: (
+    taskTerminationEventChannel: EventEmitter,
+  ) => Promise<string | Error>
+} => {
   const { gitlab } = ctx
-  const { pipeline } = taskGitlabContext
+  const { pipeline } = taskGitlabCtx
+
   return {
-    ...taskGitlabContext,
-    terminatePipeline: () => cancelGitlabPipeline(ctx, pipeline),
-    waitUntilPipelineFinished: () => {
-      return new Promise((resolve, reject) => {
-        const pollPipelineCompletion = async () => {
-          try {
-            const { status: pipelineStatus } = (await (
-              await fetch(
-                `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
-                {
-                  method: "POST",
-                  headers: { "PRIVATE-TOKEN": gitlab.accessToken },
-                },
-              )
-            ).json()) as { status: string }
-            switch (pipelineStatus) {
-              case "success":
-              case "canceled":
-              case "failed": {
-                return resolve(status)
+    ...taskGitlabCtx,
+    terminate: () => {
+      return cancelGitlabPipeline(ctx, pipeline)
+    },
+    waitUntilFinished: (taskTerminationEventChannel) => {
+      return Promise.race([
+        new Promise<string>((resolve) => {
+          taskTerminationEventChannel.on("finished", () => {
+            return resolve("finished")
+          })
+        }),
+        new Promise<string>((resolve, reject) => {
+          const pollPipelineCompletion = async () => {
+            try {
+              const { status: pipelineStatus } = (await (
+                await fetch(
+                  `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
+                  {
+                    method: "POST",
+                    headers: { "PRIVATE-TOKEN": gitlab.accessToken },
+                  },
+                )
+              ).json()) as { status: string }
+              switch (pipelineStatus) {
+                case "success":
+                case "skipped":
+                case "canceled":
+                case "failed": {
+                  return resolve(status)
+                }
               }
+              setTimeout(() => {
+                void pollPipelineCompletion()
+              }, 32768)
+            } catch (error) {
+              reject(error)
             }
-            setTimeout(pollPipelineCompletion, 32768)
-          } catch (error) {
-            reject(error)
           }
-        }
-        pollPipelineCompletion()
-      })
+          void pollPipelineCompletion()
+        }),
+      ])
     },
   }
 }

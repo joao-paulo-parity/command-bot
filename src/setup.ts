@@ -28,7 +28,6 @@ export const setup = async (
     allowedOrganizations,
     dataPath,
     matrix: matrixConfiguration,
-    cargoTargetDir,
     nodesAddresses,
     masterToken,
     shouldClearTaskDatabaseOnStart,
@@ -55,16 +54,12 @@ export const setup = async (
           accessToken: string
         }
       | undefined
-    cargoTargetDir: string | undefined
     shouldClearTaskDatabaseOnStart?: boolean
   },
 ) => {
-  if (cargoTargetDir) {
-    await ensureDir(cargoTargetDir)
-  }
-
-  const repositoryCloneDirectoryPath = path.join(dataPath, "repositories")
-  const repositoryCloneDirectory = await ensureDir(repositoryCloneDirectoryPath)
+  const repositoryCloneDirectory = await ensureDir(
+    path.join(dataPath, "repositories"),
+  )
 
   const taskDbPath = await initDatabaseDir(path.join(dataPath, "db"))
   const taskDb = new TaskDB(getDb(taskDbPath))
@@ -132,22 +127,20 @@ export const setup = async (
   }
 
   const ctx: Context = {
-    appName: "try-runtime-bot",
     taskDb,
     accessDb,
     getFetchEndpoint,
     log: bot.log,
     allowedOrganizations,
     logger,
-    repositoryCloneDirectory,
     deployment,
     matrix,
     masterToken,
     nodesAddresses,
     startDate,
     shouldPostPullRequestComment,
-    cargoTargetDir: process.env.CARGO_TARGET_DIR,
     gitlab,
+    repositoryCloneDirectory,
   }
 
   void requeueUnterminatedTasks(ctx, bot)

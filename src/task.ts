@@ -2,25 +2,18 @@ import assert from "assert"
 import cp from "child_process"
 import { randomUUID } from "crypto"
 import { parseISO } from "date-fns"
-import fs from "fs"
+import EventEmitter from "events"
 import { extractRequestError, MatrixClient } from "matrix-bot-sdk"
-import path from "path"
 import { Probot } from "probot"
 
 import { getSortedTasks } from "src/db"
 
-import { getDeploymentsLogsMessage, prepareBranch } from "./core"
-import {
-  ExtendedOctokit,
-  getPostPullRequestResult,
-  updateComment,
-} from "./github"
+import { prepareBranch } from "./core"
+import { getPostPullRequestResult, updateComment } from "./github"
 import { restoreTaskGitlabContext, runCommandInGitlabPipeline } from "./gitlab"
 import { Logger } from "./logger"
-import { ShellExecutor } from "./shell"
-import { CommandExecutor, CommandOutput, Context, GitRef } from "./types"
+import { CommandOutput, Context, GitRef } from "./types"
 import {
-  displayDuration,
   displayError,
   escapeHtml,
   getNextUniqueIncrementalId,
@@ -89,7 +82,7 @@ export const queueTask = async (
     updateProgress,
   }: {
     onResult: (result: CommandOutput) => Promise<unknown>
-    updateProgress?: (message: string) => void
+    updateProgress?: (message: string) => Promise<unknown>
   },
 ) => {
   assert(
@@ -101,20 +94,13 @@ export const queueTask = async (
     ...parentCtx,
     logger: parentCtx.logger.child({ taskId: task.id }),
   }
-  const { execPath, args, commandDisplay, repoPath } = task
-  const {
-    logger,
-    taskDb,
-    getFetchEndpoint,
-    appName,
-    repositoryCloneDirectory,
-    cargoTargetDir,
-  } = ctx
+  const { logger, taskDb, getFetchEndpoint } = ctx
   const { db } = taskDb
 
   await db.put(task.id, JSON.stringify(task))
 
-  let terminateTask: (() => Promise<Error | void>) | undefined = undefined
+  const taskTerminationEventChannel = new EventEmitter()
+  let terminateTask: (() => Promise<Error | undefined>) | undefined = undefined
   let activeProcess: cp.ChildProcess | undefined = undefined
   let taskIsAlive = true
   const terminate = async () => {
@@ -124,6 +110,8 @@ export const queueTask = async (
         logger.error(terminationError, "Unable to terminate task")
         return
       }
+      terminateTask = undefined
+      taskTerminationEventChannel.emit("finished")
     }
 
     taskIsAlive = false
@@ -142,9 +130,7 @@ export const queueTask = async (
     }
 
     activeProcess.kill()
-    logger.info(
-      `Killed child with PID ${activeProcess.pid ?? "?"} (${commandDisplay})`,
-    )
+    logger.info(`Killed child with PID ${activeProcess.pid ?? "?"}`)
 
     activeProcess = undefined
   }
@@ -186,20 +172,12 @@ export const queueTask = async (
           if (taskIsAlive) {
             logger.info(
               { task, currentTaskQueue: await getSortedTasks(ctx) },
-              `Starting task of ${commandDisplay}`,
+              "Starting task",
             )
           } else {
             logger.info(task, "Task was cancelled before it could start")
             return cancelledMessage
           }
-
-          const { run } = new ShellExecutor(ctx, {
-            shouldTrackProgress: false,
-            itemsToRedact: [],
-            onChild: (createdChild) => {
-              activeProcess = createdChild
-            },
-          })
 
           const prepareBranchSteps = prepareBranch(ctx, task, {
             getFetchEndpoint: () => {
@@ -240,7 +218,9 @@ export const queueTask = async (
           const { pipeline } = taskGitlabCtx
 
           if (updateProgress) {
-            updateProgress(`@${task.requester} ${pipeline.webUrl} was started`)
+            await updateProgress(
+              `@${task.requester} ${pipeline.webUrl} was started`,
+            )
           }
 
           return taskGitlabCtx
@@ -254,9 +234,9 @@ export const queueTask = async (
       }
 
       terminateTask = taskStartResult.terminate
-      await taskStartResult.waitUntilPipelineFinished()
+      await taskStartResult.waitUntilFinished(taskTerminationEventChannel)
 
-      return `${pipeline.pipelineUrl} ${
+      return `${taskStartResult.pipeline.webUrl} ${
         taskIsAlive ? "was cancelled" : "finished"
       }`
     } catch (error) {

@@ -1,30 +1,22 @@
-import { spawn, ChildProcess } from "child_process"
+import { ChildProcess, spawn } from "child_process"
 import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
 import { promisify } from "util"
-import { Logger } from "./logger"
 
-import { CommandExecutor, CommandOutput, Context, ToString } from "./types"
-import { displayCommand, intoError, redact } from "./utils"
+import { Logger } from "./logger"
+import { Context, ToString } from "./types"
+import { displayCommand, redact } from "./utils"
 
 export const fsExists = promisify(fs.exists)
 export const fsReadFile = promisify(fs.readFile)
 export const fsWriteFile = promisify(fs.writeFile)
-const fsRmdir = promisify(fs.rmdir)
 const fsMkdir = promisify(fs.mkdir)
 const fsUnlink = promisify(fs.unlink)
 
 export const ensureDir = async (dir: string) => {
   if (!(await fsExists(dir))) {
     await fsMkdir(dir, { recursive: true })
-  }
-  return dir
-}
-
-const removeDir = async (dir: string) => {
-  if (!(await fsExists(dir))) {
-    await fsRmdir(dir, { recursive: true })
   }
   return dir
 }
@@ -38,13 +30,7 @@ export const initDatabaseDir = async (dir: string) => {
   return dir
 }
 
-type ShellExecutorConfiguration = {
-  itemsToRedact: string[]
-  shouldTrackProgress: boolean
-  cwd?: string
-  onChild?: (child: ChildProcess) => void
-}
-export class ShellExecutor {
+export class CommandRunner {
   private logger: Logger
 
   constructor(
@@ -65,9 +51,11 @@ export class ShellExecutor {
     {
       allowedErrorCodes,
       testAllowedErrorMessage,
+      shouldCaptureAllStreams,
     }: {
       allowedErrorCodes?: number[]
       testAllowedErrorMessage?: (stderr: string) => boolean
+      shouldCaptureAllStreams?: boolean
     } = {},
   ) {
     const { logger } = this
@@ -83,61 +71,79 @@ export class ShellExecutor {
         onChild(child)
       }
 
-      let stdoutBuf = ""
-      let stderrBuf = ""
-      const getStreamHandler = function (channel: "stdout" | "stderr") {
-        return function (data: { toString: () => string }) {
-          const str = redact(data.toString(), itemsToRedact)
+      const commandOutputBuffer: ["stdout" | "stderr", string][] = []
+      const getStreamHandler = (channel: "stdout" | "stderr") => {
+        return (data: ToString) => {
+          const str =
+            itemsToRedact === undefined
+              ? data.toString()
+              : redact(data.toString(), itemsToRedact)
           const strTrim = str.trim()
 
-          if (strTrim && shouldTrackProgress) {
+          if (shouldTrackProgress && strTrim) {
             logger.info(strTrim, channel)
           }
 
-          switch (channel) {
-            case "stdout": {
-              stdoutBuf += str
-              break
-            }
-            case "stderr": {
-              stderrBuf += str
-              break
-            }
-            default: {
-              const exhaustivenessCheck: never = channel
-              // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-              throw new Error(`Not exhaustive: ${exhaustivenessCheck}`)
-            }
-          }
+          commandOutputBuffer.push([channel, str])
         }
       }
-
       child.stdout.on("data", getStreamHandler("stdout"))
       child.stderr.on("data", getStreamHandler("stderr"))
 
-      child.on("close", async (exitCode, signal) => {
+      child.on("close", (exitCode, signal) => {
         logger.info(
           `Process finished with exit code ${exitCode ?? "??"}${
             signal ? `and signal ${signal}` : ""
           }`,
         )
+
         if (signal) {
-          resolve(new Error(`Process got terminated by signal ${signal}`))
-        } else if (exitCode) {
-          const stderr = redact(stderrBuf.trim(), itemsToRedact)
-          if (
-            allowedErrorCodes?.includes(exitCode) ||
-            (testAllowedErrorMessage !== undefined &&
-              testAllowedErrorMessage(stderr))
-          ) {
-            logger.info(`Finished command ${commandDisplayed}`)
-            resolve(redact(stdoutBuf.trim(), itemsToRedact))
-          } else {
-            reject(new Error(stderr))
-          }
-        } else {
-          resolve(redact(stdoutBuf.trim(), itemsToRedact))
+          return resolve(
+            new Error(`Process got terminated by signal ${signal}`),
+          )
         }
+
+        if (exitCode) {
+          const rawStderr = commandOutputBuffer
+            .reduce((acc, [stream, value]) => {
+              if (stream === "stderr") {
+                return `${acc}${value}`
+              } else {
+                return acc
+              }
+            }, "")
+            .trim()
+          const stderr =
+            itemsToRedact === undefined
+              ? rawStderr
+              : redact(rawStderr, itemsToRedact)
+          if (
+            !allowedErrorCodes?.includes(exitCode) &&
+            (testAllowedErrorMessage === undefined ||
+              !testAllowedErrorMessage(stderr))
+          ) {
+            return reject(new Error(stderr))
+          }
+        }
+
+        const outputBuf = shouldCaptureAllStreams
+          ? commandOutputBuffer.reduce((acc, [_, value]) => {
+              return `${acc}${value}`
+            }, "")
+          : commandOutputBuffer.reduce((acc, [stream, value]) => {
+              if (stream === "stdout") {
+                return `${acc}${value}`
+              } else {
+                return acc
+              }
+            }, "")
+        const rawOutput = outputBuf.trim()
+        const output =
+          itemsToRedact === undefined
+            ? rawOutput
+            : redact(rawOutput, itemsToRedact)
+
+        resolve(output)
       })
     })
   }

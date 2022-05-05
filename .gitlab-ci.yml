@@ -91,9 +91,6 @@ lint:
       sed -i "s/version:.*/version: $KUBERNETES_VERSION_TAG/" helm/Chart.yaml
     - |-
       sed -i "s/appVersion:.*/appVersion: $KUBERNETES_VERSION_TAG/" helm/Chart.yaml
-    # CARGO_TARGET_DIR is shared for the projects we compile because then their
-    # common build artifacts can be reused, overall both speeding up the
-    # compilation and using less disk space
     - helm upgrade --install "$KUBE_NAMESPACE" ./helm
       --values helm/values.yaml
       --namespace "$KUBE_NAMESPACE"

@@ -1,5 +1,4 @@
 import assert from "assert"
-import { differenceInMilliseconds } from "date-fns"
 
 export const envVar = (name: string) => {
   const val = process.env[name]
@@ -56,39 +55,6 @@ export const intoError = (value: unknown) => {
 export const displayError = (value: unknown) => {
   const error = intoError(value)
   return `${error.toString()}${error.stack ? `\n${error.stack}` : ""}`
-}
-
-export const displayDuration = (start: Date, finish: Date) => {
-  const delta = Math.abs(differenceInMilliseconds(finish, start))
-
-  const days = Math.floor(delta / 1000 / 60 / 60 / 24)
-  const hours = Math.floor((delta / 1000 / 60 / 60) % 24)
-  const minutes = Math.floor((delta / 1000 / 60) % 60)
-  const seconds = Math.floor((delta / 1000) % 60)
-
-  const milliseconds =
-    delta -
-    days * 24 * 60 * 60 * 1000 -
-    hours * 60 * 60 * 1000 -
-    minutes * 60 * 1000 -
-    seconds * 1000
-
-  let buf = ""
-  const separator = ", "
-  for (const [name, value] of Object.entries({
-    days,
-    hours,
-    minutes,
-    seconds,
-    milliseconds,
-  })) {
-    if (!value) {
-      continue
-    }
-    buf = `${buf}${separator}${value} ${name}`
-  }
-
-  return buf.slice(separator.length)
 }
 
 export const escapeHtml = (str: string) => {

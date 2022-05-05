@@ -222,7 +222,6 @@ const main = async () => {
       allowedOrganizations,
       dataPath,
       matrix,
-      cargoTargetDir: process.env.CARGO_TARGET_DIR,
       nodesAddresses,
       masterToken,
       shouldClearTaskDatabaseOnStart,

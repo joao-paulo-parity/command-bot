@@ -2,9 +2,9 @@ import assert from "assert"
 
 import { botPullRequestCommentMention } from "./bot"
 import { ExtendedOctokit, isOrganizationMember } from "./github"
-import { ShellExecutor } from "./shell"
+import { CommandRunner } from "./shell"
 import { Task } from "./task"
-import { CommandExecutor, Context } from "./types"
+import { Context } from "./types"
 
 export const defaultParseTryRuntimeBotCommandOptions = {
   baseEnv: { RUST_LOG: "remote-ext=info" },
@@ -133,21 +133,21 @@ export const prepareBranch = async function* (
 ) {
   const { token, url } = await getFetchEndpoint()
 
-  const { run } = new ShellExecutor(ctx, {
+  const cmdRunner = new CommandRunner(ctx, {
     itemsToRedact: [token],
     shouldTrackProgress: false,
   })
 
-  yield run("mkdir", ["-p", repoPath])
+  yield cmdRunner.run("mkdir", ["-p", repoPath])
 
-  const { run: runInRepo } = new ShellExecutor(ctx, {
+  const repoCmdRunner = new CommandRunner(ctx, {
     itemsToRedact: [token],
     shouldTrackProgress: false,
     cwd: repoPath,
   })
 
   // Clone the repository if it does not exist
-  yield runInRepo(
+  yield repoCmdRunner.run(
     "git",
     ["clone", "--quiet", `${url}/${owner}/${repo}`, repoPath],
     {
@@ -158,16 +158,16 @@ export const prepareBranch = async function* (
   )
 
   // Clean up garbage files before checkout
-  yield runInRepo("git", ["add", "."])
-  yield runInRepo("git", ["reset", "--hard"])
+  yield repoCmdRunner.run("git", ["add", "."])
+  yield repoCmdRunner.run("git", ["reset", "--hard"])
 
   // Check out to the detached head so that any branch can be deleted
-  const out = await runInRepo("git", ["rev-parse", "HEAD"])
+  const out = await repoCmdRunner.run("git", ["rev-parse", "HEAD"])
   if (out instanceof Error) {
     return out
   }
   const detachedHead = out.trim()
-  yield runInRepo("git", ["checkout", "--quiet", detachedHead], {
+  yield repoCmdRunner.run("git", ["checkout", "--quiet", detachedHead], {
     testAllowedErrorMessage: (err) => {
       // Why the hell is this not printed to stdout?
       return err.startsWith("HEAD is now at")
@@ -175,28 +175,28 @@ export const prepareBranch = async function* (
   })
 
   const prRemote = "pr"
-  yield runInRepo("git", ["remote", "remove", prRemote], {
+  yield repoCmdRunner.run("git", ["remote", "remove", prRemote], {
     testAllowedErrorMessage: (err) => {
       return err.includes("No such remote:")
     },
   })
 
-  yield runInRepo("git", [
+  yield repoCmdRunner.run("git", [
     "remote",
     "add",
     prRemote,
     `${url}/${contributor}/${repo}.git`,
   ])
 
-  yield runInRepo("git", ["fetch", "--quiet", prRemote, branch])
+  yield repoCmdRunner.run("git", ["fetch", "--quiet", prRemote, branch])
 
-  yield runInRepo("git", ["branch", "-D", branch], {
+  yield repoCmdRunner.run("git", ["branch", "-D", branch], {
     testAllowedErrorMessage: (err) => {
       return err.endsWith("not found.")
     },
   })
 
-  yield runInRepo("git", [
+  yield repoCmdRunner.run("git", [
     "checkout",
     "--quiet",
     "--track",
