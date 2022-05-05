@@ -166,7 +166,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
         }
 
         const commentBody =
-          `Preparing try-runtime command for branch: \`${branch}\`. Comment will be updated.\n\n`.trim()
+          `Preparing command for branch: \`${branch}\`. This comment will be updated later.`.trim()
         const commentCreationResponse = await createComment(ctx, octokit, {
           ...commentParams,
           body: commentBody,
