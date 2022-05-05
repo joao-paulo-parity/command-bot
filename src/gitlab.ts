@@ -137,9 +137,44 @@ export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
 export const getTaskGitlabContext = async (
   ctx: Context,
   taskGitlabContext: TaskGitlabContext,
-): Promise<TaskGitlabContext & { terminate: () => Promise<boolean> }> => {
+): Promise<
+  TaskGitlabContext & {
+    terminatePipeline: () => Promise<Error | void>
+    waitUntilPipelineFinished: () => Promise<string | Error>
+  }
+> => {
+  const { gitlab } = ctx
+  const { pipeline } = taskGitlabContext
   return {
     ...taskGitlabContext,
-    terminate: () => cancelGitlabPipeline(ctx, taskGitlabContext.pipeline),
+    terminatePipeline: () => cancelGitlabPipeline(ctx, pipeline),
+    waitUntilPipelineFinished: () => {
+      return new Promise((resolve, reject) => {
+        const pollPipelineCompletion = async () => {
+          try {
+            const { status: pipelineStatus } = (await (
+              await fetch(
+                `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
+                {
+                  method: "POST",
+                  headers: { "PRIVATE-TOKEN": gitlab.accessToken },
+                },
+              )
+            ).json()) as { status: string }
+            switch (pipelineStatus) {
+              case "success":
+              case "canceled":
+              case "failed": {
+                return resolve(status)
+              }
+            }
+            setTimeout(pollPipelineCompletion, 32768)
+          } catch (error) {
+            reject(error)
+          }
+        }
+        pollPipelineCompletion()
+      })
+    },
   }
 }
