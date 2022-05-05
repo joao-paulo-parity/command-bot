@@ -227,21 +227,24 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
             branch,
             prNumber: pr.number,
           },
-          commandDisplay: displayCommand({ execPath, args, secretsToHide: [] }),
+          commandDisplay: displayCommand({ execPath, args, itemsToRedact: [] }),
           timesRequeued: 0,
           timesRequeuedSnapshotBeforeExecution: 0,
           timesExecuted: 0,
           repoPath: path.join(repositoryCloneDirectory, pr.repo),
           queuedDate: serializeTaskQueuedDate(queuedDate),
+          gitlab: null,
         }
 
-        const message = await queueTask(ctx, task, {
+        await queueTask(ctx, task, {
           onResult: getPostPullRequestResult(ctx, octokit, task),
-        })
-        await updateComment(ctx, octokit, {
-          ...commentParams,
-          comment_id: commentId,
-          body: `${commentBody}\n${message}`,
+          updateProgress: (message: string) => {
+            return updateComment(ctx, octokit, {
+              ...commentParams,
+              comment_id: commentCreationResponse.id,
+              body: message,
+            })
+          },
         })
 
         break

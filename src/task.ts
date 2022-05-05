@@ -1,5 +1,4 @@
 import assert from "assert"
-import { Mutex, Semaphore, SemaphoreInterface } from "async-mutex"
 import cp from "child_process"
 import { randomUUID } from "crypto"
 import { parseISO } from "date-fns"
@@ -11,9 +10,13 @@ import { Probot } from "probot"
 import { getSortedTasks } from "src/db"
 
 import { getDeploymentsLogsMessage, prepareBranch } from "./core"
-import { getPostPullRequestResult, updateComment } from "./github"
+import {
+  ExtendedOctokit,
+  getPostPullRequestResult,
+  updateComment,
+} from "./github"
 import { Logger } from "./logger"
-import { getShellCommandExecutor } from "./shell"
+import { ShellExecutor } from "./shell"
 import { CommandExecutor, CommandOutput, Context, GitRef } from "./types"
 import {
   displayDuration,
@@ -37,30 +40,25 @@ type TaskBase<T> = {
   gitRef: GitRef
   repoPath: string
   requester: string
+  gitlab: {
+    pipeline: {
+      id: number
+      projectId: number
+    }
+  } | null
 }
 
-type PullRequestTaskCommonParts = {
+export type PullRequestTask = TaskBase<"PullRequestTask"> & {
   commentId: number
   installationId: number
   gitRef: GitRef & { prNumber: number }
 }
 
-export type PullRequestTask = TaskBase<"PullRequestTask"> &
-  PullRequestTaskCommonParts
-
-export type PullRequestCiRunnerTask = TaskBase<"PullRequestCiRunnerTask"> &
-  PullRequestTaskCommonParts & {
-    pipeline: {
-      id: number
-      project_id: number
-    } | null
-  }
-
 export type ApiTask = TaskBase<"ApiTask"> & {
   matrixRoom: string
 }
 
-export type Task = PullRequestTask | ApiTask | PullRequestCiRunnerTask
+export type Task = PullRequestTask | ApiTask
 
 export const queuedTasks: Map<
   string,
@@ -79,15 +77,15 @@ export const parseTaskQueuedDate = (str: string) => {
   return parseISO(str)
 }
 
-const ciRunnerExecutionQueueMutex = new Semaphore(4)
-const localExecutionQueueMutex = new Mutex()
 export const queueTask = async (
   parentCtx: Context,
   task: Task,
   {
     onResult,
+    updateProgress,
   }: {
     onResult: (result: CommandOutput) => Promise<unknown>
+    updateProgress?: (body: string) => void
   },
 ) => {
   assert(
@@ -99,66 +97,6 @@ export const queueTask = async (
     ...parentCtx,
     logger: parentCtx.logger.child({ taskId: task.id }),
   }
-
-  const { taskQueueMutex, runTaskCommand, cancelTaskCommand } = (() => {
-    switch (task.tag) {
-      case "PullRequestTask":
-      case "ApiTask": {
-        return {
-          taskQueueMutex: localExecutionQueueMutex,
-          runTaskCommand: getShellCommandExecutor(ctx, {
-            projectsRoot: repositoryCloneDirectory,
-            onChild: (createdChild) => {
-              taskProcess = createdChild
-            },
-          }),
-          cancelTaskCommand: null
-        }
-      }
-      case "PullRequestCiRunnerTask": {
-        const ciRunnerExecCtx = getCiRunnerExecutionContext(ctx)
-        return {
-          taskQueueMutex: ciRunnerExecutionQueueMutex,
-          runTaskCommand: ciRunnerExecCtx.runTaskCommand,
-          cancelTaskCommand: ciRunnerExecCtx.cancelTaskCommand,
-        }
-      }
-      default: {
-        const exhaustivenessCheck: never = task
-        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-        throw new Error(`Not exhaustive: ${exhaustivenessCheck}`)
-      }
-    }
-  })()
-
-  let taskProcess: cp.ChildProcess | undefined = undefined
-  let taskIsAlive = true
-  const terminate = async () => {
-    taskIsAlive = false
-
-    queuedTasks.delete(task.id)
-
-    await db.del(task.id)
-
-    logger.info(
-      { task, queue: await getSortedTasks(ctx) },
-      "Queue state after termination of task",
-    )
-
-    if (taskProcess === undefined) {
-      return
-    }
-
-    taskProcess.kill()
-    logger.info(
-      `Killed child with PID ${taskProcess.pid ?? "?"} (${commandDisplay})`,
-    )
-
-    taskProcess = undefined
-  }
-
-  queuedTasks.set(task.id, { task, cancel: terminate })
-
   const { execPath, args, commandDisplay, repoPath } = task
   const {
     logger,
@@ -170,20 +108,41 @@ export const queueTask = async (
   } = ctx
   const { db } = taskDb
 
-  let suffixMessage = getDeploymentsLogsMessage(ctx)
-  if (!fs.existsSync(repoPath)) {
-    suffixMessage +=
-      "\n**Note:** project will be cloned for the first time, so all dependencies will be compiled from scratch; this might take a long time"
-  } else if (
-    cargoTargetDir
-      ? !fs.existsSync(cargoTargetDir)
-      : !fs.existsSync(path.join(repoPath, "target"))
-  ) {
-    suffixMessage +=
-      '\n**Note:** "target" directory does not exist, so all dependencies will be compiled from scratch; this might take a long time'
+  await db.put(task.id, JSON.stringify(task))
+
+  let terminateCommandExecution: (() => Promise<void>) | undefined = undefined
+  let activeProcess: cp.ChildProcess | undefined = undefined
+  let taskIsAlive = true
+  const terminate = async () => {
+    if (terminateCommandExecution) {
+      await terminateCommandExecution()
+    }
+
+    taskIsAlive = false
+
+    queuedTasks.delete(task.id)
+
+    await db.del(task.id)
+
+    logger.info(
+      { task, queue: await getSortedTasks(ctx) },
+      "Queue state after termination of task",
+    )
+
+    if (activeProcess === undefined) {
+      return
+    }
+
+    activeProcess.kill()
+    logger.info(
+      `Killed child with PID ${activeProcess.pid ?? "?"} (${commandDisplay})`,
+    )
+
+    activeProcess = undefined
   }
 
-  const message = await getTaskQueueMessage(ctx, commandDisplay)
+  queuedTasks.set(task.id, { task, cancel: terminate })
+
   const cancelledMessage = "Command was cancelled"
 
   const afterTaskRun = async (result: CommandOutput) => {
@@ -196,95 +155,77 @@ export const queueTask = async (
     }
   }
 
-  await db.put(task.id, JSON.stringify(task))
+  const runTask = async () => {
+    try {
+      await db.put(
+        task.id,
+        JSON.stringify({
+          ...task,
+          timesRequeuedSnapshotBeforeExecution: task.timesRequeued,
+          timesExecuted: task.timesExecuted + 1,
+        }),
+      )
 
-  void taskQueueMutex
-    .runExclusive(async () => {
-      try {
-        await db.put(
-          task.id,
-          JSON.stringify({
-            ...task,
-            timesRequeuedSnapshotBeforeExecution: task.timesRequeued,
-            timesExecuted: task.timesExecuted + 1,
-          }),
+      if (taskIsAlive) {
+        logger.info(
+          { task, currentTaskQueue: await getSortedTasks(ctx) },
+          `Starting task of ${commandDisplay}`,
         )
-
-        if (taskIsAlive) {
-          logger.info(
-            { task, currentTaskQueue: await getSortedTasks(ctx) },
-            `Starting task of ${commandDisplay}`,
-          )
-        } else {
-          logger.info(task, "Task was cancelled before it could start")
-          return cancelledMessage
-        }
-
-        const run = getShellCommandExecutor(ctx, {
-          projectsRoot: repositoryCloneDirectory,
-          onChild: (createdChild) => {
-            taskProcess = createdChild
-          },
-        })
-
-        const prepare = prepareBranch(task, {
-          run,
-          getFetchEndpoint: () => {
-            return getFetchEndpoint(
-              "installationId" in task ? task.installationId : null,
-            )
-          },
-        })
-        while (taskIsAlive) {
-          const next = await prepare.next()
-          if (next.done) {
-            break
-          }
-
-          taskProcess = undefined
-
-          if (typeof next.value !== "string") {
-            return next.value
-          }
-        }
-        if (!taskIsAlive) {
-          return cancelledMessage
-        }
-
-        const startTime = new Date()
-        const result = await run(execPath, args, {
-          options: {
-            env: {
-              ...process.env,
-              ...task.env,
-              // https://github.com/paritytech/substrate/commit/9247e150ca0f50841a60a213ad8b15efdbd616fa
-              WASM_BUILD_WORKSPACE_HINT: repoPath,
-            },
-            cwd: repoPath,
-          },
-          shouldTrackProgress: true,
-          shouldCaptureAllStreams: true,
-        })
-        const endTime = new Date()
-
-        const resultDisplay =
-          result instanceof Error ? displayError(result) : result
-
-        return taskIsAlive
-          ? `${appName} took ${displayDuration(
-              startTime,
-              endTime,
-            )} (from ${startTime.toISOString()} to ${endTime.toISOString()} server time) for ${commandDisplay}
-              ${resultDisplay}`
-          : cancelledMessage
-      } catch (error) {
-        return intoError(error)
+      } else {
+        logger.info(task, "Task was cancelled before it could start")
+        return cancelledMessage
       }
-    })
-    .then(afterTaskRun)
-    .catch(afterTaskRun)
 
-  return `${message}\n${suffixMessage}`
+      const { run } = new ShellExecutor(ctx, {
+        shouldTrackProgress: false,
+        itemsToRedact: [],
+        onChild: (createdChild) => {
+          activeProcess = createdChild
+        },
+      })
+
+      const prepare = prepareBranch(ctx, task, {
+        getFetchEndpoint: () => {
+          return getFetchEndpoint(
+            "installationId" in task ? task.installationId : null,
+          )
+        },
+      })
+      while (taskIsAlive) {
+        const next = await prepare.next()
+        if (next.done) {
+          break
+        }
+
+        activeProcess = undefined
+
+        if (typeof next.value !== "string") {
+          return next.value
+        }
+      }
+      if (!taskIsAlive) {
+        return cancelledMessage
+      }
+
+      const pipelineCtx = await runCommandInPipeline(execPath, args, task)
+      if (updateProgress) {
+        updateProgress(
+          `@${task.requester} ${pipelineCtx.pipelineUrl} was started`,
+        )
+      }
+      terminateCommandExecution = pipelineCtx.terminateCommandExecution
+      await pipelineCtx.waitUntilPipelineFinished()
+
+      return `${pipelineCtx.pipelineUrl} ${
+        taskIsAlive ? "was cancelled" : "finished"
+      }`
+    } catch (error) {
+      return intoError(error)
+    }
+  }
+  void runTask().then(afterTaskRun).catch(afterTaskRun)
+
+  return "Command was queued. This comment will be updated when execution starts."
 }
 
 export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
@@ -418,35 +359,6 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
       }
     }
   }
-}
-
-const getTaskQueueMessage = async (
-  ctx: Parameters<typeof getSortedTasks>[0],
-  commandDisplay: string,
-) => {
-  const items = await getSortedTasks(ctx)
-
-  if (items.length) {
-    return `
-Queued ${commandDisplay}
-
-There are other items ahead of it in the queue: ${items.reduce(
-      (acc, value, i) => {
-        return `
-
-${i + 1}:
-
-\`\`\`
-${JSON.stringify(value, null, 2)}
-\`\`\`
-
-`
-      },
-      "",
-    )}`
-  }
-
-  return `\nExecuting:\n\n\`${commandDisplay}\``
 }
 
 export const getSendTaskMatrixResult = (

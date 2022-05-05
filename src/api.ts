@@ -169,7 +169,11 @@ export const setupApi = (ctx: Context, server: Server) => {
       return errorResponse(res, next, 422, args)
     }
 
-    const commandDisplay = displayCommand({ execPath, args, secretsToHide })
+    const commandDisplay = displayCommand({
+      execPath,
+      args,
+      itemsToRedact: secretsToHide,
+    })
     const taskId = getNextTaskId()
     const queuedDate = new Date()
 
@@ -188,6 +192,7 @@ export const setupApi = (ctx: Context, server: Server) => {
       repoPath: path.join(repositoryCloneDirectory, gitRef.repo),
       queuedDate: serializeTaskQueuedDate(queuedDate),
       requester: matrixRoom,
+      gitlab: null,
     }
 
     const message = await queueTask(ctx, task, {

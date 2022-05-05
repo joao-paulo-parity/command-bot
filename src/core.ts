@@ -2,6 +2,7 @@ import assert from "assert"
 
 import { botPullRequestCommentMention } from "./bot"
 import { ExtendedOctokit, isOrganizationMember } from "./github"
+import { ShellExecutor } from "./shell"
 import { Task } from "./task"
 import { CommandExecutor, Context } from "./types"
 
@@ -122,26 +123,28 @@ export const isRequesterAllowed = async (
 }
 
 export const prepareBranch = async function* (
+  ctx: Context,
   { repoPath, gitRef: { contributor, owner, repo, branch } }: Task,
   {
-    run,
     getFetchEndpoint,
   }: {
-    run: CommandExecutor
     getFetchEndpoint: () => Promise<{ token: string; url: string }>
   },
 ) {
-  yield run("mkdir", ["-p", repoPath])
-
   const { token, url } = await getFetchEndpoint()
 
-  const runInRepo = (...[execPath, args, options]: Parameters<typeof run>) => {
-    return run(execPath, args, {
-      ...options,
-      secretsToHide: [token, ...(options?.secretsToHide ?? [])],
-      options: { cwd: repoPath, ...options?.options },
-    })
-  }
+  const { run } = new ShellExecutor(ctx, {
+    itemsToRedact: [token],
+    shouldTrackProgress: false,
+  })
+
+  yield run("mkdir", ["-p", repoPath])
+
+  const { run: runInRepo } = new ShellExecutor(ctx, {
+    itemsToRedact: [token],
+    shouldTrackProgress: false,
+    cwd: repoPath,
+  })
 
   // Clone the repository if it does not exist
   yield runInRepo(
@@ -159,9 +162,7 @@ export const prepareBranch = async function* (
   yield runInRepo("git", ["reset", "--hard"])
 
   // Check out to the detached head so that any branch can be deleted
-  const out = await runInRepo("git", ["rev-parse", "HEAD"], {
-    options: { cwd: repoPath },
-  })
+  const out = await runInRepo("git", ["rev-parse", "HEAD"])
   if (out instanceof Error) {
     return out
   }

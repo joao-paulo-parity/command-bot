@@ -31,13 +31,13 @@ export const getLines = (str: string) => {
 export const displayCommand = ({
   execPath,
   args,
-  secretsToHide,
+  itemsToRedact,
 }: {
   execPath: string
   args: string[]
-  secretsToHide: string[]
+  itemsToRedact: string[]
 }) => {
-  return redact(`${execPath} ${args.join(" ")}`, secretsToHide, "{SECRET}")
+  return redact(`${execPath} ${args.join(" ")}`, itemsToRedact)
 }
 
 export const millisecondsDelay = (milliseconds: number) => {
@@ -110,7 +110,11 @@ export const getNextUniqueIncrementalId = () => {
   return nextIncrementalId
 }
 
-export const redact = (str: string, items: string[], replacement: string) => {
+export const redact = (
+  str: string,
+  items: string[],
+  replacement: string = "{SECRET}",
+) => {
   for (const item of items) {
     str = str.replaceAll(item, replacement)
   }
