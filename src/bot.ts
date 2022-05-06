@@ -23,6 +23,77 @@ import { displayCommand, displayError, getLines } from "./utils"
 
 export const botPullRequestCommentMention = "/run"
 
+type ParsedBotCommandLine = {
+  jobTags: string[]
+  command: string
+  subCommand: "queue" | "cancel"
+}
+export const parsePullRequestBotCommandLine = (rawCommandLine: string) => {
+  let commandLine = rawCommandLine.trim()
+
+  if (!commandLine.startsWith(botPullRequestCommentMention)) {
+    return
+  }
+
+  commandLine = commandLine.slice(botPullRequestCommentMention.length).trim()
+
+  const subCommand = (() => {
+    const match = /^\w+/.exec(commandLine)
+    switch (match?.[0]) {
+      case "cancel":
+      case "queue": {
+        return match[0]
+      }
+      default: {
+        return new Error(
+          `Invalid subcommand "${match?.[0]}" in line ${rawCommandLine}.`,
+        )
+      }
+    }
+  })()
+  if (subCommand instanceof Error) {
+    return subCommand
+  }
+
+  const startOfArgs = " $ "
+  const indexOfArgsStart = commandLine.indexOf(startOfArgs)
+  if (indexOfArgsStart) {
+    return new Error(`Could not find start of arguments ("${startOfArgs}")`)
+  }
+
+  const commandLinePart = commandLine.slice(
+    indexOfArgsStart + startOfArgs.length,
+  )
+
+  const botOptionsLinePart = commandLine.slice(0, indexOfArgsStart)
+  const botOptionsTokens = botOptionsLinePart.split(" ").filter((value) => {
+    botOptionsLinePart
+    return !!value
+  })
+
+  let activeOption: string | undefined = undefined
+  const options: Map<string, string[]> = new Map()
+  for (const tok of botOptionsTokens) {
+    if (tok[0] === "-") {
+      activeOption = tok
+    } else if (activeOption) {
+      options.set(activeOption, [...(options.get(activeOption) ?? []), tok])
+    } else {
+      return new Error(`Expected command option, got ${tok}`)
+    }
+  }
+
+  const jobTags = (options.get("-t") ?? []).concat(options.get("--tag") ?? [])
+
+  if (jobTags?.length ?? 0 === 0) {
+    return new Error(
+      `Unable to parse job tags from command line ${botOptionsLinePart}`,
+    )
+  }
+
+  return { jobTags, command: commandLinePart.trim(), subCommand }
+}
+
 type WebhookEvents = Extract<EmitterWebhookEventName, "issue_comment.created">
 
 type WebhookEventPayload<E extends WebhookEvents> =
@@ -91,21 +162,24 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
   }
 
   try {
-    const commandLines = getLines(comment.body)
-      .map((line) => {
-        return parsePullRequestBotCommand(line)
-      })
-      .filter((line) => {
-        return !!line
-      })
+    let botCommand: ParsedBotCommandLine | undefined = undefined
+    for (const line of getLines(comment.body)) {
+      const parsedLine = parsePullRequestBotCommandLine(line)
 
-    const command = commandLines[0]
-    if (command === undefined) {
-      return
+      if (parsedLine === undefined) {
+        continue
+      }
+
+      if (parsedLine instanceof Error) {
+        return getError(parsedLine.message)
+      }
+
+      botCommand = parsedLine
+      break
     }
 
-    if (commandLines.length > 1) {
-      return getError("Only one try-runtime-bot command is allowed per comment")
+    if (botCommand === undefined) {
+      return
     }
 
     if (!(await isRequesterAllowed(ctx, octokit, requester))) {
@@ -114,9 +188,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
       )
     }
 
-    const [subCommand, ...otherArgs] = command.args
-
-    switch (subCommand) {
+    switch (botCommand.subCommand) {
       case "queue": {
         const installationId = installation?.id
         if (!installationId) {
@@ -205,7 +277,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           requester,
           execPath,
           args,
-          env: command.env,
+          env: botCommand.env,
           commentId,
           installationId,
           gitRef: {

@@ -6,68 +6,6 @@ import { CommandRunner } from "./shell"
 import { Task } from "./task"
 import { Context } from "./types"
 
-const parseArg = (prev: string, option: string, arg: string) => {
-  if (arg.startsWith(`${option}=`)) {
-    return arg.slice(`${option}=`.length)
-  } else if (arg === option) {
-    return true
-  }
-}
-
-export const parsePullRequestBotCommandLine = (commandLine: string) => {
-  commandLine = commandLine.trim()
-
-  if (!commandLine.startsWith("/run ")) {
-    return
-  }
-
-  commandLine = commandLine.slice("/run ".length).trim()
-
-  const startOfArgs = " $ "
-  const indexOfArgsStart = commandLine.indexOf(startOfArgs)
-  if (indexOfArgsStart) {
-    return new Error(`Could not find start of arguments ("${startOfArgs}")`)
-  }
-
-  const commandLinePart = commandLine.slice(
-    indexOfArgsStart + startOfArgs.length,
-  )
-
-  const botOptionsLinePart = commandLine.slice(0, indexOfArgsStart)
-  const botOptionsTokens = botOptionsLinePart.split(" ").filter((value) => {
-    botOptionsLinePart
-    return !!value
-  })
-
-  let activeOption: string | undefined = undefined
-  const options: Map<string, string[]> = new Map()
-  for (const tok of botOptionsTokens) {
-    if (tok[0] === "-") {
-      activeOption = tok
-    } else if (activeOption) {
-      options.set(activeOption, [...(options.get(activeOption) ?? []), tok])
-    } else {
-      return new Error(`Expected command option, got ${tok}`)
-    }
-  }
-
-  const jobTags = (options.get("-t") ?? []).concat(options.get("--tag") ?? [])
-
-  if (jobTags?.length ?? 0 === 0) {
-    return new Error(
-      `Unable to parse job tags from command line ${botOptionsLinePart}`,
-    )
-  }
-
-  return { jobTags, command: commandLinePart.trim() }
-}
-
-export const getDeploymentsLogsMessage = ({ deployment }: Context) => {
-  return deployment === undefined
-    ? ""
-    : `The logs for this command should be available on Grafana for the data source \`loki.${deployment.environment}\` and query \`{container=~"${deployment.container}"}\``
-}
-
 export const isRequesterAllowed = async (
   ctx: Context,
   octokit: ExtendedOctokit,
