@@ -27,6 +27,13 @@ process.env.CLIENT_ID ??= "placeholder"
 process.env.CLIENT_SECRET ??= "placeholder"
 
 /*
+  Related to the GitLab instance where the commands will be executed
+*/
+process.env.GITLAB_ACCESS_TOKEN ??= "placeholder"
+process.env.GITLAB_DOMAIN ??= "placeholder"
+process.env.GITLAB_PUSH_NAMESPACE ??= "placeholder"
+
+/*
   This private key's file can be generated and downloaded from
   https://github.com/settings/apps/[app-name].
   If you need to calculate the Base64 of the value manually, that can be done
