@@ -6,7 +6,6 @@ const fs = require("fs")
 const path = require("path")
 
 /*
-
   Notes:
   - All variables are required unless explicitly told otherwise.
   - All values used for the variables are presented only for the sake of
@@ -60,16 +59,6 @@ process.env.ALLOWED_ORGANIZATIONS ??= "123,456"
   API tokens, but cannot be used as a normal token.
 */
 process.env.MASTER_TOKEN ??= "placeholder"
-
-/*
-  Any environment variable following the pattern `${NAME}_WEBSOCKET_ADDRESS`
-  will be registered as a possible node target at the start of the application.
-  For instance, if you define a `POLKADOT_WEBSOCKET_ADDRESS` it will be
-  possible try use `ws://polkadot` in try-runtime's arguments.
-*/
-// process.env.POLKADOT_WEBSOCKET_ADDRESS ??= "ws://0.0.0.0:9944"
-// process.env.KUSAMA_WEBSOCKET_ADDRESS ??= "ws://0.0.0.0:9945"
-// process.env.WESTEND_WEBSOCKET_ADDRESS ??= "ws://0.0.0.0:9946"
 
 /*
   NOT REQUIRED

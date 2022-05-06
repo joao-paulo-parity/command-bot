@@ -6,96 +6,60 @@ import { CommandRunner } from "./shell"
 import { Task } from "./task"
 import { Context } from "./types"
 
-export const defaultParseTryRuntimeBotCommandOptions = {
-  baseEnv: { RUST_LOG: "remote-ext=info" },
+const parseArg = (prev: string, option: string, arg: string) => {
+  if (arg.startsWith(`${option}=`)) {
+    return arg.slice(`${option}=`.length)
+  } else if (arg === option) {
+    return true
+  }
 }
 
-export const parsePullRequestBotCommand = (
-  commandLine: string,
-  { baseEnv }: { baseEnv: Record<string, string> },
-) => {
-  const allTokens = commandLine.split(" ").filter((value) => {
-    return !!value
-  })
+export const parsePullRequestBotCommandLine = (commandLine: string) => {
+  commandLine = commandLine.trim()
 
-  const [firstToken, ...tokens] = allTokens
-
-  if (firstToken !== botPullRequestCommentMention) {
+  if (!commandLine.startsWith("/run ")) {
     return
   }
 
-  const args: string[] = []
+  commandLine = commandLine.slice("/run ".length).trim()
 
-  const env: Record<string, string> = { ...baseEnv }
-  // envArgs are only collected at the start of the command line
-  let isCollectingEnvVars = true
-
-  for (const tok of tokens) {
-    if (isCollectingEnvVars) {
-      const matches = tok.match(/^([A-Za-z_]+)=(.*)/)
-      if (matches === null) {
-        isCollectingEnvVars = false
-      } else {
-        const [, name, value] = matches
-        assert(name)
-        env[name] = value
-        continue
-      }
-    }
-    args.push(tok)
+  const startOfArgs = " $ "
+  const indexOfArgsStart = commandLine.indexOf(startOfArgs)
+  if (indexOfArgsStart) {
+    return new Error(`Could not find start of arguments ("${startOfArgs}")`)
   }
 
-  return { args, env }
-}
+  const commandLinePart = commandLine.slice(
+    indexOfArgsStart + startOfArgs.length,
+  )
 
-export const parsePullRequestBotCommandArgs = (
-  { nodesAddresses }: Context,
-  args: string[],
-) => {
-  // This expression catches the following forms: -foo=, --foo=
-  const commandOptionExpression = /^-[^=\s]+=/
+  const botOptionsLinePart = commandLine.slice(0, indexOfArgsStart)
+  const botOptionsTokens = botOptionsLinePart.split(" ").filter((value) => {
+    botOptionsLinePart
+    return !!value
+  })
 
-  // This expression catches the following forms: ws://foo, wss://foo, etc.
-  const uriPrefixExpression = /^ws\w*:\/\//
-
-  const nodeOptionsDisplay = `Available names are: ${Object.keys(
-    nodesAddresses,
-  ).join(", ")}.`
-
-  const parsedArgs = []
-  for (const rawArg of args) {
-    const optionPrefix = commandOptionExpression.exec(rawArg)
-    const { argPrefix, arg } =
-      optionPrefix === null
-        ? { argPrefix: "", arg: rawArg }
-        : {
-            argPrefix: optionPrefix[0],
-            arg: rawArg.slice(optionPrefix[0].length),
-          }
-
-    const uriPrefixMatch = uriPrefixExpression.exec(arg)
-    if (uriPrefixMatch === null) {
-      parsedArgs.push(rawArg)
-      continue
+  let activeOption: string | undefined = undefined
+  const options: Map<string, string[]> = new Map()
+  for (const tok of botOptionsTokens) {
+    if (tok[0] === "-") {
+      activeOption = tok
+    } else if (activeOption) {
+      options.set(activeOption, [...(options.get(activeOption) ?? []), tok])
+    } else {
+      return new Error(`Expected command option, got ${tok}`)
     }
-    const [uriPrefix] = uriPrefixMatch
-
-    const invalidNodeAddressExplanation = `Argument "${arg}" started with ${uriPrefix} and therefore it was interpreted as a node address, but it is invalid`
-
-    const node = arg.slice(uriPrefix.length)
-    if (!node) {
-      return `${invalidNodeAddressExplanation}. Must specify one address in the form \`${uriPrefix}name\`. ${nodeOptionsDisplay}`
-    }
-
-    const nodeAddress = nodesAddresses[node]
-    if (!nodeAddress) {
-      return `${invalidNodeAddressExplanation}. Nodes are referred to by name. No node named "${node}" is available. ${nodeOptionsDisplay}`
-    }
-
-    parsedArgs.push(`${argPrefix}${nodeAddress}`)
   }
 
-  return parsedArgs
+  const jobTags = (options.get("-t") ?? []).concat(options.get("--tag") ?? [])
+
+  if (jobTags?.length ?? 0 === 0) {
+    return new Error(
+      `Unable to parse job tags from command line ${botOptionsLinePart}`,
+    )
+  }
+
+  return { jobTags, command: commandLinePart.trim() }
 }
 
 export const getDeploymentsLogsMessage = ({ deployment }: Context) => {

@@ -5,7 +5,6 @@ import LevelErrors from "level-errors"
 import path from "path"
 import { Server } from "probot"
 
-import { parsePullRequestBotCommandArgs } from "./core"
 import {
   ApiTask,
   getNextTaskId,
@@ -158,16 +157,11 @@ export const setupApi = (ctx: Context, server: Server) => {
     }
     const {
       execPath,
-      args: inputArgs,
+      args,
       gitRef,
       secretsToHide = [],
       env = {},
     } = req.body as Payload
-
-    const args = parsePullRequestBotCommandArgs(ctx, inputArgs)
-    if (typeof args === "string") {
-      return errorResponse(res, next, 422, args)
-    }
 
     const commandDisplay = displayCommand({
       execPath,

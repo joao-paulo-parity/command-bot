@@ -3,12 +3,7 @@ import { IssueCommentCreatedEvent } from "@octokit/webhooks-types/schema"
 import path from "path"
 import { Probot } from "probot"
 
-import {
-  defaultParseTryRuntimeBotCommandOptions,
-  isRequesterAllowed,
-  parsePullRequestBotCommand,
-  parsePullRequestBotCommandArgs,
-} from "./core"
+import { isRequesterAllowed } from "./core"
 import {
   createComment,
   ExtendedOctokit,
@@ -26,7 +21,7 @@ import {
 import { Context, PullRequestError } from "./types"
 import { displayCommand, displayError, getLines } from "./utils"
 
-export const botPullRequestCommentMention = "/try-runtime"
+export const botPullRequestCommentMention = "/run"
 
 type WebhookEvents = Extract<EmitterWebhookEventName, "issue_comment.created">
 
@@ -98,10 +93,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
   try {
     const commandLines = getLines(comment.body)
       .map((line) => {
-        return parsePullRequestBotCommand(
-          line,
-          defaultParseTryRuntimeBotCommandOptions,
-        )
+        return parsePullRequestBotCommand(line)
       })
       .filter((line) => {
         return !!line
@@ -223,7 +215,6 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
             branch,
             prNumber: pr.number,
           },
-          commandDisplay: displayCommand({ execPath, args, itemsToRedact: [] }),
           timesRequeued: 0,
           timesRequeuedSnapshotBeforeExecution: 0,
           timesExecuted: 0,
