@@ -12,12 +12,6 @@ type Octokit = Awaited<ReturnType<Probot["auth"]>>
 
 const wasOctokitExtendedByApplication = Symbol()
 
-/*
-  The actual limit should be 65532 but we're a bit conservative here
-  https://github.community/t/maximum-length-for-the-comment-body-in-issues-and-pr/148867/2
-*/
-const githubCommentCharacterLimit = 65500
-
 export type ExtendedOctokit = Octokit & {
   orgs: Octokit["orgs"] & {
     userMembershipByOrganizationId: {
@@ -299,48 +293,13 @@ export const getPostPullRequestResult = (
         command,
       } = task
 
-      const before = `
-@${requester} Results are ready for:\n\n  \`${command}\`
-
-<details>
-<summary>Output</summary>
-
-\`\`\`
-`
-
-      const after = `
-\`\`\`
-
-</details>
-
-`
-
-      let resultDisplay =
-        typeof result === "string" ? result : displayError(result)
-      let truncateMessageWarning: string
-      if (
-        before.length + resultDisplay.length + after.length >
-        githubCommentCharacterLimit
-      ) {
-        truncateMessageWarning = `\n---\nThe command's output was too big to be fully displayed.`
-        const truncationIndicator = "[truncated]..."
-        resultDisplay = `${resultDisplay.slice(
-          0,
-          githubCommentCharacterLimit -
-            (before.length +
-              truncationIndicator.length +
-              after.length +
-              truncateMessageWarning.length),
-        )}${truncationIndicator}`
-      } else {
-        truncateMessageWarning = ""
-      }
-
       await createComment(ctx, octokit, {
         owner,
         repo,
         issue_number: prNumber,
-        body: `${before}${resultDisplay}${after}${truncateMessageWarning}`,
+        body: `@${requester} Command \`${command}\` has finished. ${
+          typeof result === "string" ? result : displayError(result)
+        }`,
       })
     } catch (error) {
       logger.error(

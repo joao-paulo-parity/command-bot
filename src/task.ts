@@ -107,11 +107,7 @@ export const queueTask = async (
   let taskIsAlive = true
   const terminate = async () => {
     if (terminateTask) {
-      const terminationError = await terminateTask()
-      if (terminationError) {
-        logger.error(terminationError, "Unable to terminate task")
-        return
-      }
+      await terminateTask()
       terminateTask = undefined
       taskEventChannel.emit(taskTerminationEvent)
     }
@@ -122,19 +118,16 @@ export const queueTask = async (
 
     await db.del(task.id)
 
-    if (activeProcess === undefined) {
-      return
+    if (activeProcess !== undefined) {
+      activeProcess.kill()
+      logger.info(`Killed child with PID ${activeProcess.pid ?? "?"}`)
+      activeProcess = undefined
     }
-
-    activeProcess.kill()
-    logger.info(`Killed child with PID ${activeProcess.pid ?? "?"}`)
-
-    activeProcess = undefined
   }
 
   const queueMessage = `Check out https://${gitlab.domain}/${gitlab.pushNamespace}/${task.gitRef.repo}/-/pipelines?page=1&scope=all&username=${gitlab.accessTokenUsername} to know what else is being executed currently`
 
-  const cancelledMessage = "Command was cancelled"
+  const cancelledMessage = "Task was cancelled"
 
   const afterTaskRun = (result: CommandOutput | null) => {
     const wasAlive = taskIsAlive
@@ -230,7 +223,7 @@ export const queueTask = async (
       await taskStartResult.waitUntilFinished(taskEventChannel)
 
       return `${taskStartResult.jobWebUrl} ${
-        taskIsAlive ? "was cancelled" : "finished"
+        taskIsAlive ? "finished" : "was cancelled"
       }`
     } catch (error) {
       return intoError(error)

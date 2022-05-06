@@ -86,29 +86,6 @@ const main = async () => {
       })(process.env.TASK_DB_VERSION.trim())
     : false
 
-  const deployment = (() => {
-    const value = process.env.IS_DEPLOYMENT
-    switch (value) {
-      case "true": {
-        assert(process.env.DEPLOYMENT_ENVIRONMENT)
-        assert(process.env.DEPLOYMENT_CONTAINER)
-        return {
-          environment: process.env.DEPLOYMENT_ENVIRONMENT,
-          container: process.env.DEPLOYMENT_CONTAINER,
-        }
-      }
-      case undefined:
-      case "false": {
-        return
-      }
-      default: {
-        throw new Error(
-          `Invalid value for $IS_DEPLOYMENT: ${value ?? "undefined"}`,
-        )
-      }
-    }
-  })()
-
   if (process.env.PING_PORT) {
     // Signal that we have started listening until Probot kicks in
     const pingPort = parseInt(process.env.PING_PORT)
@@ -217,7 +194,6 @@ const main = async () => {
       clientId,
       clientSecret,
       privateKey,
-      deployment,
       logger,
       startDate,
       shouldPostPullRequestComment,
@@ -227,6 +203,7 @@ const main = async () => {
       nodesAddresses,
       masterToken,
       shouldClearTaskDatabaseOnStart,
+      isDeployment: !!process.env.IS_DEPLOYMENT,
       gitlab: {
         accessToken: gitlabAccessToken,
         accessTokenUsername: gitlabAccessTokenUsername,

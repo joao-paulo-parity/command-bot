@@ -56,7 +56,17 @@ export const intoError = (value: unknown) => {
 
 export const displayError = (value: unknown) => {
   const error = intoError(value)
-  return `${error.toString()}${error.stack ? `\n${error.stack}` : ""}`
+
+  let errorMessage = `${error.toString()}${
+    error.stack ? `\n${error.stack}` : ""
+  }`
+  if (error instanceof Joi.ValidationError) {
+    errorMessage = `${errorMessage}\n${JSON.stringify(
+      normalizeValue(error._original),
+    )}`
+  }
+
+  return errorMessage
 }
 
 export const escapeHtml = (str: string) => {
@@ -194,10 +204,10 @@ export const validatedFetch = async <T>(
   schema: Joi.AnySchema,
   { decoding }: { decoding: "json" } = { decoding: "json" },
 ) => {
-  const body: unknown = (async () => {
+  const body = await (async () => {
     switch (decoding) {
       case "json": {
-        return await (await response).json()
+        return (await response).json()
       }
       default: {
         const exhaustivenessCheck: never = decoding

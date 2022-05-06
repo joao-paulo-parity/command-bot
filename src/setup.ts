@@ -21,7 +21,6 @@ export const setup = async (
     clientId,
     clientSecret,
     privateKey,
-    deployment,
     startDate,
     logger,
     shouldPostPullRequestComment,
@@ -32,9 +31,10 @@ export const setup = async (
     masterToken,
     shouldClearTaskDatabaseOnStart,
     gitlab,
+    isDeployment,
   }: Pick<
     Context,
-    | "deployment"
+    | "isDeployment"
     | "shouldPostPullRequestComment"
     | "allowedOrganizations"
     | "nodesAddresses"
@@ -122,7 +122,7 @@ export const setup = async (
 
   const { value: matrix } = matrixClientSetup
 
-  if (deployment !== undefined && matrix === null) {
+  if (isDeployment && matrix === null) {
     throw new Error("Matrix configuration is expected for deployments")
   }
 
@@ -133,7 +133,7 @@ export const setup = async (
     log: bot.log,
     allowedOrganizations,
     logger,
-    deployment,
+    isDeployment,
     matrix,
     masterToken,
     nodesAddresses,

@@ -1,8 +1,8 @@
 import EventEmitter from "events"
+import Joi from "joi"
 import fetch from "node-fetch"
 import path from "path"
 import yaml from "yaml"
-import Joi from "joi"
 
 import { CommandRunner, fsWriteFile } from "./shell"
 import { Task, TaskGitlabPipeline, taskTerminationEvent } from "./task"
@@ -75,35 +75,38 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
       )}/pipeline?ref=${encodeURIComponent(branchName)}`,
       { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
     ),
-    Joi.object().keys({
-      id: Joi.number().required(),
-      project_id: Joi.number().required(),
-    }),
+    Joi.object()
+      .keys({
+        id: Joi.number().required(),
+        project_id: Joi.number().required(),
+      })
+      .options({ allowUnknown: true }),
   )
   logger.info(pipeline, `Created pipeline for task ${task.id}`)
 
   const [job] = await validatedFetch<
     [
       {
-        id: number
         web_url: string
       },
     ]
   >(
     fetch(
-      `https://${gitlab.domain}/api/v4/projects/${pipeline.project_id}/pipeline/${pipeline.id}/jobs`,
+      `https://${gitlab.domain}/api/v4/projects/${pipeline.project_id}/pipelines/${pipeline.id}/jobs`,
       { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
     ),
-    Joi.array().items(
-      Joi.object().keys({
-        id: Joi.number().required(),
-        web_url: Joi.string().required(),
-      }),
-    ),
+    Joi.array()
+      .items(
+        Joi.object()
+          .keys({ web_url: Joi.string().required() })
+          .options({ allowUnknown: true }),
+      )
+      .length(1)
+      .required(),
   )
   logger.info(job, `Created job for task ${task.id}`)
 
-  return getLiveTaskGitlabContext(ctx, {
+  return getAliveTaskGitlabContext(ctx, {
     id: pipeline.id,
     projectId: pipeline.project_id,
     jobWebUrl: job.web_url,
@@ -119,35 +122,49 @@ export const cancelGitlabPipeline = async (
     { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
   )
 
-  if (response.ok) {
-    return
+  if (!response.ok) {
+    return new Error(await response.text())
   }
-
-  return new Error(await response.text())
 }
 
-export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
-  if (!task.gitlab.pipeline) {
-    return
-  }
-
+const isPipelineFinished = async (
+  ctx: Context,
+  pipeline: TaskGitlabPipeline,
+) => {
   const { gitlab } = ctx
-  const { pipeline } = task.gitlab
 
-  const { status: pipelineStatus } = await validatedFetch<{
+  const { status } = await validatedFetch<{
     status: string
   }>(
     fetch(
-      `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
+      `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipelines/${pipeline.id}`,
       { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
     ),
-    Joi.object().keys({ status: Joi.string().required() }),
+    Joi.object()
+      .keys({ status: Joi.string().required() })
+      .options({ allowUnknown: true }),
   )
-  if (isPipelineFinishedStatus(pipelineStatus)) {
+  switch (status) {
+    case "success":
+    case "skipped":
+    case "canceled":
+    case "failed": {
+      return true
+    }
+  }
+}
+
+export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
+  const { pipeline } = task.gitlab
+  if (!pipeline) {
+    return
+  }
+
+  if (await isPipelineFinished(ctx, pipeline)) {
     return null
   }
 
-  return getLiveTaskGitlabContext(ctx, task.gitlab.pipeline)
+  return getAliveTaskGitlabContext(ctx, pipeline)
 }
 
 export const isPipelineFinishedStatus = (status: string) => {
@@ -161,14 +178,13 @@ export const isPipelineFinishedStatus = (status: string) => {
   }
 }
 
-const getLiveTaskGitlabContext = (
+const getAliveTaskGitlabContext = (
   ctx: Context,
   pipeline: TaskGitlabPipeline,
 ): TaskGitlabPipeline & {
   terminate: () => Promise<Error | undefined>
   waitUntilFinished: (taskEventChannel: EventEmitter) => Promise<unknown>
 } => {
-  const { gitlab } = ctx
   return {
     ...pipeline,
     terminate: () => {
@@ -182,23 +198,12 @@ const getLiveTaskGitlabContext = (
         new Promise<void>((resolve, reject) => {
           const pollPipelineCompletion = async () => {
             try {
-              const { status: pipelineStatus } = await validatedFetch<{
-                status: string
-              }>(
-                fetch(
-                  `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
-                  { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
-                ),
-                Joi.object().keys({ status: Joi.string().required() }),
-              )
-
-              if (isPipelineFinishedStatus(pipelineStatus)) {
+              if (await isPipelineFinished(ctx, pipeline)) {
                 return resolve()
               }
-
               setTimeout(() => {
                 void pollPipelineCompletion()
-              }, 32768)
+              }, 16384)
             } catch (error) {
               reject(error)
             }

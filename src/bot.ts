@@ -22,7 +22,7 @@ import {
 import { Context, PullRequestError } from "./types"
 import { displayError, getLines } from "./utils"
 
-export const botPullRequestCommentMention = "/run"
+export const botPullRequestCommentMention = "/cmd"
 
 type ParsedBotCommand = {
   jobTags: string[]
@@ -280,16 +280,19 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
             },
           }
 
-          await queueTask(ctx, task, {
+          const updateProgress = (message: string) => {
+            return updateComment(ctx, octokit, {
+              ...commentParams,
+              comment_id: createdComment.id,
+              body: message,
+            })
+          }
+
+          const queueMessage = await queueTask(ctx, task, {
             onResult: getPostPullRequestResult(ctx, octokit, task),
-            updateProgress: (message: string) => {
-              return updateComment(ctx, octokit, {
-                ...commentParams,
-                comment_id: createdComment.id,
-                body: message,
-              })
-            },
+            updateProgress,
           })
+          await updateProgress(queueMessage)
 
           break
         }

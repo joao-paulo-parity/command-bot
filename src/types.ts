@@ -20,7 +20,7 @@ export type Context = {
   log: (str: string) => void
   allowedOrganizations: number[]
   logger: Logger
-  deployment: { environment: string; container: string } | undefined
+  isDeployment: boolean
   matrix: MatrixClient | null
   masterToken: string
   nodesAddresses: Record<string, string>

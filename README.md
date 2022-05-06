@@ -1,8 +1,6 @@
 # Introduction
 
-This bot provides interfaces for executing the
-[try-runtime cli](https://github.com/paritytech/substrate/blob/master/utils/frame/try-runtime/cli/)
-on a dedicated remote host.
+command-bot provides interfaces for executing the arbitrary commands on GitLab CI.
 
 Before starting to work on this project, we recommend reading the
 [Implementation section](#implementation).
@@ -32,9 +30,8 @@ Before starting to work on this project, we recommend reading the
 
 # How it works <a name="how-it-works"></a>
 
-This bot executes the
-[try-runtime CLI](https://github.com/paritytech/substrate/blob/master/utils/frame/try-runtime/cli)
-from [commands in pull request comments](#pull-request-commands) (the
+command-bot executes arbitrary commands on GitLab CI from
+[commands in pull request comments](#pull-request-commands) (the
 [GitHub App](#github-app) has to be installed in the repository) and from
 [API requests](#api).
 
@@ -42,34 +39,19 @@ from [commands in pull request comments](#pull-request-commands) (the
 
 ## Queue <a name="pull-request-command-queue"></a>
 
-*Note*: the try-runtime CLI arguments showed in the examples might be
-outdated. Consult the
-[try-runtime CLI](https://github.com/paritytech/substrate/blob/master/utils/frame/try-runtime/cli/src/lib.rs)'s
-source code from your pull request for the actual options.
-
 Comment in a pull request:
 
-`/try-runtime queue [env-vars] --uri ws://[kusama | westend | polkadot] [try-runtime-cli-args]`
+`/cmd queue [bot-args] $ [command]`
 
 For instance:
 
-`/try-runtime queue RUST_LOG=debug --uri ws://kusama --block-at "0x0" on-runtime-upgrade live`
-
-The `[try-runtime-cli-args]` form accepts the same arguments as the
-[try-runtime CLI](https://github.com/paritytech/substrate/blob/master/utils/frame/try-runtime/cli/src/lib.rs)
-from your pull request, except that you **need to** refer to the nodes by their
-name e.g. `ws://polkadot` instead of using arbitrary addresses.
-
-Upon receiving the event for that comment, try-runtime-bot will queue the
-execution of the try-runtime CLI using the pull request's branch and post the
-result (`stdout` for success or `stderr` for errors) as a pull request comment
-when it finishes.
+`/cmd queue -t linux-docker $ RUST_LOG=debug cargo run --quiet --features=foo bar`
 
 ## Cancel <a name="pull-request-command-cancel"></a>
 
-In the pull request where you previously ran `/try-runtime queue`, comment:
+In the pull request where you previously ran `/cmd queue`, comment:
 
-`/try-runtime cancel`
+`/cmd cancel`
 
 # API <a name="api"></a>
 
@@ -90,7 +72,7 @@ be posted to after it finishes.
 curl \
   -H "X-Auth: $MASTER_TOKEN" \
   -H "Content-Type: application/json" \
-  -X POST http://try-runtime-bot/api/access \
+  -X POST http://command-bot/access \
   -d '{
     "token": "secret",
     "matrixRoom": "!tZrvvMzoIkIYbCkLuk:matrix.foo.io",
@@ -107,19 +89,13 @@ curl \
   -H "X-Auth: $token" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
-  -X POST http://try-runtime-bot/api/queue \
+  -X POST http://command-bot/api/queue \
   -d '{
-    "execPath": "cargo",
-    "args": [
-      "run",
-      "--quiet",
-      "--features=try-runtime",
-      "try-runtime",
-      "--block-at=0x5d67782862757220cb25cf073585f6a75a9031f1da4115e5cba1721c2c6e249c",
-      "--url=ws://polkadot",
-      "on-runtime-upgrade",
-      "live"
-    ],
+    "job": {
+      "tags": ["linux-docker"],
+      "image": "paritytech/ci-linux:production"
+    },
+    "command": "RUST_LOG=debug cargo run --features=foo bar",
     "gitRef": {
       "contributor": "paritytech",
       "owner": "paritytech",
@@ -138,7 +114,7 @@ used for cancelling an ongoing command through `POST /api/cancel`.
 curl \
   -H "X-Auth: $token" \
   -H "Content-Type: application/json" \
-  -X POST http://try-runtime/api/cancel \
+  -X POST http://command-bot/api/cancel \
   -d '{
     "handleId": "foo"
   }'

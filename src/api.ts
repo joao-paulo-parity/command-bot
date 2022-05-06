@@ -1,6 +1,6 @@
-import Ajv from "ajv"
 import bodyParser from "body-parser"
 import { NextFunction, RequestHandler, Response } from "express"
+import Joi from "joi"
 import LevelErrors from "level-errors"
 import path from "path"
 import { Server } from "probot"
@@ -120,36 +120,23 @@ export const setupApi = (ctx: Context, server: Server) => {
       }
     }
 
-    const ajv = new Ajv()
-    const validateQueueEndpointInput = ajv.compile({
-      type: "object",
-      properties: {
-        command: { type: "string" },
-        job: {
-          type: "object",
-          properties: {
-            tags: { type: "array", items: { type: "string" } },
-            image: { type: "string" },
-          },
-          required: ["tags", "image"],
-        },
-        gitRef: {
-          type: "object",
-          properties: {
-            contributor: { type: "string" },
-            owner: { type: "string" },
-            repo: { type: "string" },
-            branch: { type: "string" },
-          },
-          required: ["contributor", "owner", "repo", "branch"],
-        },
-      },
-      required: ["command", "job", "gitRef"],
-      additionalProperties: false,
-    })
-    const isInputValid = (await validateQueueEndpointInput(req.body)) as boolean
-    if (!isInputValid) {
-      return errorResponse(res, next, 400, validateQueueEndpointInput.errors)
+    const validation = Joi.object()
+      .keys({
+        command: Joi.string().required(),
+        job: Joi.object().keys({
+          tags: Joi.array().items(Joi.string()).required(),
+          image: Joi.string().required(),
+        }),
+        gitRef: Joi.object().keys({
+          contributor: Joi.string().required(),
+          owner: Joi.string().required(),
+          repo: Joi.string().required(),
+          branch: Joi.string().required(),
+        }),
+      })
+      .validate(req.body)
+    if (validation.error) {
+      return errorResponse(res, next, 422, validation.error)
     }
 
     type Payload = Pick<ApiTask, "gitRef" | "command"> & {
@@ -175,13 +162,13 @@ export const setupApi = (ctx: Context, server: Server) => {
       gitlab: { job, pipeline: null },
     }
 
-    await queueTask(ctx, task, {
+    const queueMessage = await queueTask(ctx, task, {
       onResult: getSendTaskMatrixResult(matrix, logger, task),
     })
 
     response(res, next, 201, {
       task,
-      info: `Command queued. Send a DELETE request to ${getApiRoute(
+      message: `${queueMessage} Send a DELETE request to ${getApiRoute(
         taskRoute,
       )} for cancelling`,
     })
