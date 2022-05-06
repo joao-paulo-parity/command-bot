@@ -7,9 +7,9 @@ import { Server } from "probot"
 
 import {
   ApiTask,
+  cancelTask,
   getNextTaskId,
   getSendTaskMatrixResult,
-  queuedTasks,
   queueTask,
   serializeTaskQueuedDate,
 } from "./task"
@@ -186,19 +186,15 @@ export const setupApi = (ctx: Context, server: Server) => {
     })
   })
 
-  setupRoute("delete", taskRoute, ({ req, res, next }) => {
+  setupRoute("delete", taskRoute, async ({ req, res, next }) => {
     const { task_id: taskId } = req.params
     if (typeof taskId !== "string" || !taskId) {
       return errorResponse(res, next, 403, "Invalid task_id")
     }
 
-    const queuedTask = queuedTasks.get(taskId)
-    if (queuedTask === undefined) {
-      return errorResponse(res, next, 404)
-    }
+    await cancelTask(ctx, taskId)
 
-    void queuedTask.cancel()
-    response(res, next, 200, queuedTask.task)
+    response(res, next, 204)
   })
 
   setupRoute(

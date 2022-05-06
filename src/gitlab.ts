@@ -7,9 +7,11 @@ import { CommandRunner, fsWriteFile } from "./shell"
 import { Task, TaskGitlabPipeline } from "./task"
 import { Context } from "./types"
 
-const runCommandBranchPrefix = "ci-exec/"
+const runCommandBranchPrefix = "ci-exec"
 
 export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
+  const { logger } = ctx
+
   await fsWriteFile(
     path.join(task.repoPath, ".gitlab-ci.yml"),
     yaml.stringify({ command: { ...task.gitlab.job, script: [task.command] } }),
@@ -61,6 +63,12 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     "HEAD",
   ])
 
+  console.log(
+    `https://${gitlab.domain}/api/v4/projects/${encodeURI(
+      gitlabProjectPath,
+    )}/pipeline?ref=${encodeURI(branchName)}`,
+  )
+
   const createdPipeline = (await (
     await fetch(
       `https://${gitlab.domain}/api/v4/projects/${encodeURI(
@@ -74,6 +82,8 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     web_url: string
   }
 
+  logger.info(createdPipeline, `Created pipeline for task ${task.id}`)
+
   return getLiveTaskGitlabContext(ctx, {
     id: createdPipeline.id,
     projectId: createdPipeline.project_id,
@@ -81,7 +91,7 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
   })
 }
 
-const cancelGitlabPipeline = async (
+export const cancelGitlabPipeline = async (
   { gitlab }: Context,
   { id, projectId }: { id: number; projectId: number },
 ) => {

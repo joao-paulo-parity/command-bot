@@ -10,10 +10,20 @@ import { getSortedTasks } from "src/db"
 
 import { prepareBranch } from "./core"
 import { getPostPullRequestResult, updateComment } from "./github"
-import { restoreTaskGitlabContext, runCommandInGitlabPipeline } from "./gitlab"
+import {
+  cancelGitlabPipeline,
+  restoreTaskGitlabContext,
+  runCommandInGitlabPipeline,
+} from "./gitlab"
 import { Logger } from "./logger"
 import { CommandOutput, Context, GitRef } from "./types"
 import { displayError, getNextUniqueIncrementalId, intoError } from "./utils"
+
+/* 
+  Only useful as a means to know which tasks are alive so that unfinished tasks
+  are not queued twice on requeue attempts
+*/
+export const queuedTasks: Set<string> = new Set()
 
 export type TaskGitlabPipeline = {
   id: number
@@ -52,11 +62,6 @@ export type ApiTask = TaskBase<"ApiTask"> & {
 
 export type Task = PullRequestTask | ApiTask
 
-export const queuedTasks: Map<
-  string,
-  { cancel: () => Promise<void> | void; task: Task }
-> = new Map()
-
 export const getNextTaskId = () => {
   return `${getNextUniqueIncrementalId()}-${randomUUID()}`
 }
@@ -81,9 +86,10 @@ export const queueTask = async (
   },
 ) => {
   assert(
-    queuedTasks.get(task.id) === undefined,
+    !queuedTasks.has(task.id),
     `Attempted to queue task ${task.id} when it's already registered in the taskMap`,
   )
+  queuedTasks.add(task.id)
 
   const ctx = {
     ...parentCtx,
@@ -130,8 +136,6 @@ export const queueTask = async (
     activeProcess = undefined
   }
 
-  queuedTasks.set(task.id, { task, cancel: terminate })
-
   const cancelledMessage = "Command was cancelled"
 
   const afterTaskRun = (result: CommandOutput | null) => {
@@ -148,6 +152,15 @@ export const queueTask = async (
 
   const runTask = async () => {
     try {
+      await db.put(
+        task.id,
+        JSON.stringify({
+          ...task,
+          timesRequeuedSnapshotBeforeExecution: task.timesRequeued,
+          timesExecuted: task.timesExecuted + 1,
+        }),
+      )
+
       const restoredTaskGitlabCtx = await restoreTaskGitlabContext(ctx, task)
 
       if (restoredTaskGitlabCtx === null) {
@@ -157,15 +170,6 @@ export const queueTask = async (
       const taskStartResult =
         restoredTaskGitlabCtx ??
         (await (async () => {
-          await db.put(
-            task.id,
-            JSON.stringify({
-              ...task,
-              timesRequeuedSnapshotBeforeExecution: task.timesRequeued,
-              timesExecuted: task.timesExecuted + 1,
-            }),
-          )
-
           if (taskIsAlive) {
             logger.info(
               { task, currentTaskQueue: await getSortedTasks(ctx) },
@@ -393,4 +397,23 @@ export const getSendTaskMatrixResult = (
       )
     }
   }
+}
+
+export const cancelTask = async (ctx: Context, taskId: Task | string) => {
+  const {
+    taskDb: { db },
+  } = ctx
+
+  const task =
+    typeof taskId === "string"
+      ? await (async () => {
+          return JSON.parse(await db.get(taskId)) as Task
+        })()
+      : taskId
+
+  if (task.gitlab.pipeline !== null) {
+    await cancelGitlabPipeline(ctx, task.gitlab.pipeline)
+  }
+
+  await db.del(task.id)
 }

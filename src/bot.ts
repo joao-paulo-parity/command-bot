@@ -4,6 +4,7 @@ import path from "path"
 import { Probot } from "probot"
 
 import { isRequesterAllowed } from "./core"
+import { getSortedTasks } from "./db"
 import {
   createComment,
   ExtendedOctokit,
@@ -12,9 +13,9 @@ import {
   updateComment,
 } from "./github"
 import {
+  cancelTask,
   getNextTaskId,
   PullRequestTask,
-  queuedTasks,
   queueTask,
   serializeTaskQueuedDate,
 } from "./task"
@@ -60,43 +61,51 @@ export const parsePullRequestBotCommandLine = (rawCommandLine: string) => {
 
   commandLine = commandLine.slice(subCommand.length)
 
-  const startOfArgs = " $ "
-  const indexOfArgsStart = commandLine.indexOf(startOfArgs)
-  if (indexOfArgsStart) {
-    return new Error(`Could not find start of arguments ("${startOfArgs}")`)
-  }
+  switch (subCommand) {
+    case "queue": {
+      const startOfArgs = " $ "
+      const indexOfArgsStart = commandLine.indexOf(startOfArgs)
+      if (indexOfArgsStart === -1) {
+        return new Error(`Could not find start of arguments ("${startOfArgs}")`)
+      }
 
-  const commandLinePart = commandLine.slice(
-    indexOfArgsStart + startOfArgs.length,
-  )
+      const commandLinePart = commandLine.slice(
+        indexOfArgsStart + startOfArgs.length,
+      )
 
-  const botOptionsLinePart = commandLine.slice(0, indexOfArgsStart)
-  const botOptionsTokens = botOptionsLinePart.split(" ").filter((value) => {
-    botOptionsLinePart
-    return !!value
-  })
+      const botOptionsLinePart = commandLine.slice(0, indexOfArgsStart)
+      const botOptionsTokens = botOptionsLinePart.split(" ").filter((value) => {
+        botOptionsLinePart
+        return !!value
+      })
 
-  let activeOption: string | undefined = undefined
-  const options: Map<string, string[]> = new Map()
-  for (const tok of botOptionsTokens) {
-    if (tok[0] === "-") {
-      activeOption = tok
-    } else if (activeOption) {
-      options.set(activeOption, [...(options.get(activeOption) ?? []), tok])
-    } else {
-      return new Error(`Expected command option, got ${tok}`)
+      let activeOption: string | undefined = undefined
+      const options: Map<string, string[]> = new Map()
+      for (const tok of botOptionsTokens) {
+        if (tok[0] === "-") {
+          activeOption = tok
+        } else if (activeOption) {
+          options.set(activeOption, [...(options.get(activeOption) ?? []), tok])
+        } else {
+          return new Error(`Expected command option, got ${tok}`)
+        }
+      }
+
+      const jobTags = (options.get("-t") ?? []).concat(
+        options.get("--tag") ?? [],
+      )
+
+      if ((jobTags?.length ?? 0) === 0) {
+        return new Error(
+          `Unable to parse job tags from command line ${botOptionsLinePart}`,
+        )
+      }
+      return { jobTags, command: commandLinePart.trim(), subCommand }
+    }
+    default: {
+      return { jobTags: [], command: "", subCommand }
     }
   }
-
-  const jobTags = (options.get("-t") ?? []).concat(options.get("--tag") ?? [])
-
-  if ((jobTags?.length ?? 0) === 0) {
-    return new Error(
-      `Unable to parse job tags from command line ${botOptionsLinePart}`,
-    )
-  }
-
-  return { jobTags, command: commandLinePart.trim(), subCommand }
 }
 
 type WebhookEvents = Extract<EmitterWebhookEventName, "issue_comment.created">
@@ -202,22 +211,6 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           )
         }
 
-        for (const { task } of queuedTasks.values()) {
-          if (task.tag !== "PullRequestTask") {
-            continue
-          }
-          const { gitRef } = task
-          if (
-            gitRef.owner === pr.owner &&
-            gitRef.repo === pr.repo &&
-            gitRef.prNumber === pr.number
-          ) {
-            return getError(
-              "try-runtime is already being executed for this pull request",
-            )
-          }
-        }
-
         const prResponse = await octokit.pulls.get({
           owner: pr.owner,
           repo: pr.repo,
@@ -291,9 +284,9 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
         break
       }
       case "cancel": {
-        const commentIdsToCancel: number[] = []
+        const cancelledTasks: { id: string; commentId?: number }[] = []
 
-        for (const { task, cancel } of queuedTasks.values()) {
+        for (const { task } of await getSortedTasks(ctx)) {
           if (task.tag !== "PullRequestTask") {
             continue
           }
@@ -303,21 +296,28 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
             gitRef.repo === pr.repo &&
             gitRef.prNumber === pr.number
           ) {
-            void cancel()
-            commentIdsToCancel.push(task.commentId)
+            try {
+              await cancelTask(ctx, task)
+              cancelledTasks.push(task)
+            } catch (error) {
+              logger.error(error, `Failed to cancel task ${task.id}`)
+            }
           }
         }
 
-        if (commentIdsToCancel.length === 0) {
+        if (cancelledTasks.length === 0) {
           return getError(
-            "try-runtime is already being executed for this pull request",
+            "try-runtime is not being executed for this pull request",
           )
         }
 
-        for (const commentIdToCancel of commentIdsToCancel) {
+        for (const cancelledTask of cancelledTasks) {
+          if (cancelledTask.commentId === undefined) {
+            continue
+          }
           await updateComment(ctx, octokit, {
             ...commentParams,
-            comment_id: commentIdToCancel,
+            comment_id: cancelledTask.commentId,
             body: `@${requester} command was cancelled`.trim(),
           })
         }
