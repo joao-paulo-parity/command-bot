@@ -31,6 +31,7 @@ process.env.CLIENT_SECRET ??= "placeholder"
 process.env.GITLAB_ACCESS_TOKEN ??= "placeholder"
 process.env.GITLAB_DOMAIN ??= "placeholder"
 process.env.GITLAB_PUSH_NAMESPACE ??= "placeholder"
+process.env.GITLAB_DEFAULT_JOB_IMAGE ??= "placeholder"
 
 /*
   This private key's file can be generated and downloaded from

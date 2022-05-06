@@ -115,7 +115,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
   octokit,
   payload,
 ) => {
-  const { logger, repositoryCloneDirectory } = ctx
+  const { logger, repositoryCloneDirectory, gitlab } = ctx
 
   const { issue, comment, repository, installation } = payload
 
@@ -272,10 +272,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           repoPath: path.join(repositoryCloneDirectory, pr.repo),
           queuedDate: serializeTaskQueuedDate(queuedDate),
           gitlab: {
-            job: {
-              tags: parsedCommand.jobTags,
-              image: "paritytech/ci-linux:production",
-            },
+            job: { tags: parsedCommand.jobTags, image: gitlab.defaultJobImage },
             pipeline: null,
           },
         }

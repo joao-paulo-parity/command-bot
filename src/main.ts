@@ -208,6 +208,7 @@ const main = async () => {
   const gitlabAccessToken = envVar("GITLAB_ACCESS_TOKEN")
   const gitlabDomain = envVar("GITLAB_DOMAIN")
   const gitlabPushNamespace = envVar("GITLAB_PUSH_NAMESPACE")
+  const gitlabDefaultJobImage = envVar("GITLAB_DEFAULT_JOB_IMAGE")
 
   await server.load((probot) => {
     void setup(probot, server, {
@@ -229,6 +230,7 @@ const main = async () => {
         accessToken: gitlabAccessToken,
         domain: gitlabDomain,
         pushNamespace: gitlabPushNamespace,
+        defaultJobImage: gitlabDefaultJobImage,
       },
     })
   })
