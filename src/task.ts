@@ -139,10 +139,12 @@ export const queueTask = async (
 
   const cancelledMessage = "Command was cancelled"
 
-  const afterTaskRun = async (result: CommandOutput | null) => {
+  const afterTaskRun = (result: CommandOutput | null) => {
     const wasAlive = taskIsAlive
 
-    await terminate()
+    void terminate().catch((error) => {
+      logger.error(error, "Failed to terminate task on afterTaskRun")
+    })
 
     if (wasAlive && result !== null) {
       void onResult(result)
