@@ -31,6 +31,7 @@ export type Context = {
     domain: string
     pushNamespace: string
     defaultJobImage: string
+    accessTokenUsername: string
   }
 }
 

@@ -175,14 +175,15 @@ export const setupApi = (ctx: Context, server: Server) => {
       gitlab: { job, pipeline: null },
     }
 
-    const message = await queueTask(ctx, task, {
+    await queueTask(ctx, task, {
       onResult: getSendTaskMatrixResult(matrix, logger, task),
     })
 
     response(res, next, 201, {
-      message,
-      task_id: taskId,
-      info: `Send a DELETE request to ${getApiRoute(taskRoute)} for cancelling`,
+      task,
+      info: `Command queued. Send a DELETE request to ${getApiRoute(
+        taskRoute,
+      )} for cancelling`,
     })
   })
 

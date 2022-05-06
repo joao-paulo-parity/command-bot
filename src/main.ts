@@ -206,6 +206,7 @@ const main = async () => {
   logger.info(nodesAddresses, "Registered nodes addresses")
 
   const gitlabAccessToken = envVar("GITLAB_ACCESS_TOKEN")
+  const gitlabAccessTokenUsername = envVar("GITLAB_ACCESS_TOKEN_USERNAME")
   const gitlabDomain = envVar("GITLAB_DOMAIN")
   const gitlabPushNamespace = envVar("GITLAB_PUSH_NAMESPACE")
   const gitlabDefaultJobImage = envVar("GITLAB_DEFAULT_JOB_IMAGE")
@@ -228,6 +229,7 @@ const main = async () => {
       shouldClearTaskDatabaseOnStart,
       gitlab: {
         accessToken: gitlabAccessToken,
+        accessTokenUsername: gitlabAccessTokenUsername,
         domain: gitlabDomain,
         pushNamespace: gitlabPushNamespace,
         defaultJobImage: gitlabDefaultJobImage,

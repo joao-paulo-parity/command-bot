@@ -224,10 +224,10 @@ export const createComment = async (
 ) => {
   if (shouldPostPullRequestComment) {
     const { data, status } = await octokit.issues.createComment(...args)
-    return { status, id: data.id, data }
+    return { status, id: data.id, htmlUrl: data.html_url, data }
   } else {
     logger.info({ call: "createComment", args })
-    return { status: 201, id: 0, data: null }
+    return { status: 201, id: 0, htmlUrl: "", data: null }
   }
 }
 

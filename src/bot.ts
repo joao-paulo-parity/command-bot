@@ -169,10 +169,9 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
     repo: pr.repo,
     issue_number: pr.number,
   }
-  let commentId: number | undefined = undefined
 
-  const getError = (body: string) => {
-    return new PullRequestError(pr, { body, requester, commentId })
+  let getError = (body: string) => {
+    return new PullRequestError(pr, { body, requester })
   }
 
   try {
@@ -229,18 +228,24 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
 
         const commentBody =
           `Preparing command for branch: \`${branch}\`. This comment will be updated later.`.trim()
-        const commentCreationResponse = await createComment(ctx, octokit, {
+        const createdComment = await createComment(ctx, octokit, {
           ...commentParams,
           body: commentBody,
         })
-        if (commentCreationResponse.status !== 201) {
+        if (createdComment.status !== 201) {
           return getError(
             `When trying to create a comment in the pull request, Github API responded with unexpected status ${
               prResponse.status
-            }\n(${JSON.stringify(commentCreationResponse.data)})`,
+            }\n(${JSON.stringify(createdComment.data)})`,
           )
         }
-        commentId = commentCreationResponse.id
+        getError = (body: string) => {
+          return new PullRequestError(pr, {
+            body,
+            requester,
+            commentId: createdComment.id,
+          })
+        }
 
         const queuedDate = new Date()
 
@@ -250,7 +255,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           tag: "PullRequestTask",
           requester,
           command: parsedCommand.command,
-          commentId,
+          comment: { id: createdComment.id, htmlUrl: createdComment.htmlUrl },
           installationId,
           gitRef: {
             owner: pr.owner,
@@ -275,7 +280,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           updateProgress: (message: string) => {
             return updateComment(ctx, octokit, {
               ...commentParams,
-              comment_id: commentCreationResponse.id,
+              comment_id: createdComment.id,
               body: message,
             })
           },

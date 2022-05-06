@@ -51,7 +51,10 @@ type TaskBase<T> = {
 }
 
 export type PullRequestTask = TaskBase<"PullRequestTask"> & {
-  commentId: number
+  comment: {
+    id: number
+    htmlUrl: string
+  }
   installationId: number
   gitRef: GitRef & { prNumber: number }
 }
@@ -95,7 +98,7 @@ export const queueTask = async (
     ...parentCtx,
     logger: parentCtx.logger.child({ taskId: task.id }),
   }
-  const { logger, taskDb, getFetchEndpoint } = ctx
+  const { logger, taskDb, getFetchEndpoint, gitlab } = ctx
   const { db } = taskDb
 
   await db.put(task.id, JSON.stringify(task))
@@ -121,11 +124,6 @@ export const queueTask = async (
 
     await db.del(task.id)
 
-    logger.info(
-      { task, queue: await getSortedTasks(ctx) },
-      "Queue state after termination of task",
-    )
-
     if (activeProcess === undefined) {
       return
     }
@@ -135,6 +133,8 @@ export const queueTask = async (
 
     activeProcess = undefined
   }
+
+  const queueMessage = `Check out https://${gitlab.domain}/${gitlab.pushNamespace}/${task.gitRef.repo}/-/pipelines?page=1&scope=all&username=${gitlab.accessTokenUsername} to know what else is being executed currently`
 
   const cancelledMessage = "Command was cancelled"
 
@@ -214,7 +214,7 @@ export const queueTask = async (
 
           if (updateProgress) {
             await updateProgress(
-              `@${task.requester} ${pipelineCtx.jobWebUrl} was started`,
+              `@${task.requester} ${pipelineCtx.jobWebUrl} was started. ${queueMessage}.`,
             )
           }
 
@@ -240,7 +240,7 @@ export const queueTask = async (
   }
   void runTask().then(afterTaskRun).catch(afterTaskRun)
 
-  return "Command was queued. This comment will be updated when execution starts."
+  return `Command was queued. ${queueMessage}.`
 }
 
 export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
@@ -274,7 +274,7 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
           case "PullRequestTask": {
             const {
               gitRef: { owner, repo, prNumber: prNumber },
-              commentId,
+              comment,
               requester,
             } = task
 
@@ -285,7 +285,7 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
                 owner,
                 repo,
                 pull_number: prNumber,
-                comment_id: commentId,
+                comment_id: comment.id,
                 body: `@${requester} ${message}`,
               })
             }
