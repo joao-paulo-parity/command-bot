@@ -2,10 +2,12 @@ import EventEmitter from "events"
 import fetch from "node-fetch"
 import path from "path"
 import yaml from "yaml"
+import Joi from "joi"
 
 import { CommandRunner, fsWriteFile } from "./shell"
 import { Task, TaskGitlabPipeline } from "./task"
 import { Context } from "./types"
+import { validatedFetch } from "./utils"
 
 const runCommandBranchPrefix = "ci-exec"
 
@@ -63,31 +65,42 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     "HEAD",
   ])
 
-  const pipeline = (await (
-    await fetch(
+  const pipeline = await validatedFetch<{
+    id: number
+    project_id: number
+  }>(
+    fetch(
       `https://${gitlab.domain}/api/v4/projects/${encodeURIComponent(
         gitlabProjectPath,
       )}/pipeline?ref=${encodeURIComponent(branchName)}`,
       { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
-    )
-  ).json()) as unknown as {
-    id: number
-    project_id: number
-  }
-
+    ),
+    Joi.object().keys({
+      id: Joi.number().required(),
+      project_id: Joi.number().required(),
+    }),
+  )
   logger.info(pipeline, `Created pipeline for task ${task.id}`)
 
-  const [job] = (await (
-    await fetch(
+  const [job] = await validatedFetch<
+    [
+      {
+        id: number
+        web_url: string
+      },
+    ]
+  >(
+    fetch(
       `https://${gitlab.domain}/api/v4/projects/${pipeline.project_id}/pipeline/${pipeline.id}/jobs`,
       { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
-    )
-  ).json()) as unknown as [
-    {
-      id: number
-      web_url: string
-    },
-  ]
+    ),
+    Joi.array().items(
+      Joi.object().keys({
+        id: Joi.number().required(),
+        web_url: Joi.string().required(),
+      }),
+    ),
+  )
   logger.info(job, `Created job for task ${task.id}`)
 
   return getLiveTaskGitlabContext(ctx, {
@@ -119,22 +132,33 @@ export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
   }
 
   const { gitlab } = ctx
-
   const { pipeline } = task.gitlab
-  const { status: pipelineStatus } = (await (
-    await fetch(
+
+  const { status: pipelineStatus } = await validatedFetch<{
+    status: string
+  }>(
+    fetch(
       `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
-      { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
-    )
-  ).json()) as { status: string }
-  switch (pipelineStatus) {
-    case "canceled":
-    case "failed": {
-      return null
-    }
+      { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
+    ),
+    Joi.object().keys({ status: Joi.string().required() }),
+  )
+  if (isPipelineFinishedStatus(pipelineStatus)) {
+    return null
   }
 
   return getLiveTaskGitlabContext(ctx, task.gitlab.pipeline)
+}
+
+export const isPipelineFinishedStatus = (status: string) => {
+  switch (status) {
+    case "success":
+    case "skipped":
+    case "canceled":
+    case "failed": {
+      return true
+    }
+  }
 }
 
 const getLiveTaskGitlabContext = (
@@ -162,19 +186,17 @@ const getLiveTaskGitlabContext = (
         new Promise<string>((resolve, reject) => {
           const pollPipelineCompletion = async () => {
             try {
-              const { status: pipelineStatus } = (await (
-                await fetch(
+              const { status: pipelineStatus } = await validatedFetch<{
+                status: string
+              }>(
+                fetch(
                   `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
                   { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
-                )
-              ).json()) as { status: string }
-              switch (pipelineStatus) {
-                case "success":
-                case "skipped":
-                case "canceled":
-                case "failed": {
-                  return resolve(status)
-                }
+                ),
+                Joi.object().keys({ status: Joi.string().required() }),
+              )
+              if (isPipelineFinishedStatus(pipelineStatus)) {
+                return resolve(pipelineStatus)
               }
               setTimeout(() => {
                 void pollPipelineCompletion()

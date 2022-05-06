@@ -1,4 +1,6 @@
 import assert from "assert"
+import Joi from "joi"
+import fetch from "node-fetch"
 
 export const envVar = (name: string) => {
   const val = process.env[name]
@@ -185,4 +187,28 @@ export const normalizeValue = (
   previousObjects: unknown[] = [],
 ): unknown => {
   return normalizers[typeof value](value, previousObjects)
+}
+
+export const validatedFetch = async <T>(
+  response: ReturnType<typeof fetch>,
+  schema: Joi.AnySchema,
+  { decoding }: { decoding: "json" } = { decoding: "json" },
+) => {
+  const body: unknown = (async () => {
+    switch (decoding) {
+      case "json": {
+        return await (await response).json()
+      }
+      default: {
+        const exhaustivenessCheck: never = decoding
+        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        throw new Error(`Not exhaustive: ${exhaustivenessCheck}`)
+      }
+    }
+  })()
+  const validation = schema.validate(body)
+  if (validation.error) {
+    throw validation.error
+  }
+  return validation.value as T
 }

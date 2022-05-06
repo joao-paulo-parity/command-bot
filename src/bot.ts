@@ -175,23 +175,22 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
   }
 
   try {
-    let parsedCommand: ParsedBotCommand | undefined = undefined
+    const commands: ParsedBotCommand[] = []
     for (const line of getLines(comment.body)) {
-      const parsedLine = parsePullRequestBotCommandLine(line)
+      const parsedCommand = parsePullRequestBotCommandLine(line)
 
-      if (parsedLine === undefined) {
+      if (parsedCommand === undefined) {
         continue
       }
 
-      if (parsedLine instanceof Error) {
-        return getError(parsedLine.message)
+      if (parsedCommand instanceof Error) {
+        return getError(parsedCommand.message)
       }
 
-      parsedCommand = parsedLine
-      break
+      commands.push(parsedCommand)
     }
 
-    if (parsedCommand === undefined) {
+    if (commands.length === 0) {
       return
     }
 
@@ -201,138 +200,145 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
       )
     }
 
-    switch (parsedCommand.subCommand) {
-      case "queue": {
-        const installationId = installation?.id
-        if (!installationId) {
-          return getError(
-            "Github Installation ID was not found in webhook payload",
-          )
-        }
+    for (const parsedCommand of commands) {
+      switch (parsedCommand.subCommand) {
+        case "queue": {
+          const installationId = installation?.id
+          if (!installationId) {
+            return getError(
+              "Github Installation ID was not found in webhook payload",
+            )
+          }
 
-        const prResponse = await octokit.pulls.get({
-          owner: pr.owner,
-          repo: pr.repo,
-          pull_number: pr.number,
-        })
-
-        const contributor = prResponse.data.head?.user?.login
-        if (!contributor) {
-          return getError(`Failed to get branch owner from the Github API`)
-        }
-
-        const branch = prResponse.data.head?.ref
-        if (!branch) {
-          return getError(`Failed to get branch name from the Github API`)
-        }
-
-        const commentBody =
-          `Preparing command for branch: \`${branch}\`. This comment will be updated later.`.trim()
-        const createdComment = await createComment(ctx, octokit, {
-          ...commentParams,
-          body: commentBody,
-        })
-        if (createdComment.status !== 201) {
-          return getError(
-            `When trying to create a comment in the pull request, Github API responded with unexpected status ${
-              prResponse.status
-            }\n(${JSON.stringify(createdComment.data)})`,
-          )
-        }
-        getError = (body: string) => {
-          return new PullRequestError(pr, {
-            body,
-            requester,
-            commentId: createdComment.id,
-          })
-        }
-
-        const queuedDate = new Date()
-
-        const task: PullRequestTask = {
-          ...pr,
-          id: getNextTaskId(),
-          tag: "PullRequestTask",
-          requester,
-          command: parsedCommand.command,
-          comment: { id: createdComment.id, htmlUrl: createdComment.htmlUrl },
-          installationId,
-          gitRef: {
+          const prResponse = await octokit.pulls.get({
             owner: pr.owner,
             repo: pr.repo,
-            contributor,
-            branch,
-            prNumber: pr.number,
-          },
-          timesRequeued: 0,
-          timesRequeuedSnapshotBeforeExecution: 0,
-          timesExecuted: 0,
-          repoPath: path.join(repositoryCloneDirectory, pr.repo),
-          queuedDate: serializeTaskQueuedDate(queuedDate),
-          gitlab: {
-            job: { tags: parsedCommand.jobTags, image: gitlab.defaultJobImage },
-            pipeline: null,
-          },
-        }
+            pull_number: pr.number,
+          })
 
-        await queueTask(ctx, task, {
-          onResult: getPostPullRequestResult(ctx, octokit, task),
-          updateProgress: (message: string) => {
-            return updateComment(ctx, octokit, {
-              ...commentParams,
-              comment_id: createdComment.id,
-              body: message,
-            })
-          },
-        })
-
-        break
-      }
-      case "cancel": {
-        const cancelledTasks: { id: string; commentId?: number }[] = []
-
-        for (const { task } of await getSortedTasks(ctx)) {
-          if (task.tag !== "PullRequestTask") {
-            continue
+          const contributor = prResponse.data.head?.user?.login
+          if (!contributor) {
+            return getError(`Failed to get branch owner from the Github API`)
           }
-          const { gitRef } = task
-          if (
-            gitRef.owner === pr.owner &&
-            gitRef.repo === pr.repo &&
-            gitRef.prNumber === pr.number
-          ) {
-            try {
-              await cancelTask(ctx, task)
-              cancelledTasks.push(task)
-            } catch (error) {
-              logger.error(error, `Failed to cancel task ${task.id}`)
+
+          const branch = prResponse.data.head?.ref
+          if (!branch) {
+            return getError(`Failed to get branch name from the Github API`)
+          }
+
+          const commentBody =
+            `Preparing command "${parsedCommand.command}". This comment will be updated later.`.trim()
+          const createdComment = await createComment(ctx, octokit, {
+            ...commentParams,
+            body: commentBody,
+          })
+          if (createdComment.status !== 201) {
+            return getError(
+              `The GitHub API responded with unexpected status ${
+                prResponse.status
+              } when trying to create a comment in the pull request\n\`\`\`\n(${JSON.stringify(
+                createdComment.data,
+              )})\n\`\`\``,
+            )
+          }
+          getError = (body: string) => {
+            return new PullRequestError(pr, {
+              body,
+              requester,
+              commentId: createdComment.id,
+            })
+          }
+
+          const queuedDate = new Date()
+
+          const task: PullRequestTask = {
+            ...pr,
+            id: getNextTaskId(),
+            tag: "PullRequestTask",
+            requester,
+            command: parsedCommand.command,
+            comment: { id: createdComment.id, htmlUrl: createdComment.htmlUrl },
+            installationId,
+            gitRef: {
+              owner: pr.owner,
+              repo: pr.repo,
+              contributor,
+              branch,
+              prNumber: pr.number,
+            },
+            timesRequeued: 0,
+            timesRequeuedSnapshotBeforeExecution: 0,
+            timesExecuted: 0,
+            repoPath: path.join(repositoryCloneDirectory, pr.repo),
+            queuedDate: serializeTaskQueuedDate(queuedDate),
+            gitlab: {
+              job: {
+                tags: parsedCommand.jobTags,
+                image: gitlab.defaultJobImage,
+              },
+              pipeline: null,
+            },
+          }
+
+          await queueTask(ctx, task, {
+            onResult: getPostPullRequestResult(ctx, octokit, task),
+            updateProgress: (message: string) => {
+              return updateComment(ctx, octokit, {
+                ...commentParams,
+                comment_id: createdComment.id,
+                body: message,
+              })
+            },
+          })
+
+          break
+        }
+        case "cancel": {
+          const cancelledTasks: { id: string; commentId?: number }[] = []
+
+          for (const { task } of await getSortedTasks(ctx)) {
+            if (task.tag !== "PullRequestTask") {
+              continue
+            }
+            const { gitRef } = task
+            if (
+              gitRef.owner === pr.owner &&
+              gitRef.repo === pr.repo &&
+              gitRef.prNumber === pr.number
+            ) {
+              try {
+                await cancelTask(ctx, task)
+                cancelledTasks.push(task)
+              } catch (error) {
+                logger.error(error, `Failed to cancel task ${task.id}`)
+              }
             }
           }
-        }
 
-        if (cancelledTasks.length === 0) {
-          return getError(
-            "try-runtime is not being executed for this pull request",
-          )
-        }
-
-        for (const cancelledTask of cancelledTasks) {
-          if (cancelledTask.commentId === undefined) {
-            continue
+          if (cancelledTasks.length === 0) {
+            return getError(
+              "try-runtime is not being executed for this pull request",
+            )
           }
-          await updateComment(ctx, octokit, {
-            ...commentParams,
-            comment_id: cancelledTask.commentId,
-            body: `@${requester} command was cancelled`.trim(),
-          })
-        }
 
-        break
-      }
-      default: {
-        const exhaustivenessCheck: never = parsedCommand.subCommand
-        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-        return getError(`Invalid sub-command: ${exhaustivenessCheck}`)
+          for (const cancelledTask of cancelledTasks) {
+            if (cancelledTask.commentId === undefined) {
+              continue
+            }
+            await updateComment(ctx, octokit, {
+              ...commentParams,
+              comment_id: cancelledTask.commentId,
+              body: `@${requester} command was cancelled`.trim(),
+            })
+          }
+
+          break
+        }
+        default: {
+          const exhaustivenessCheck: never = parsedCommand.subCommand
+          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+          return getError(`Invalid sub-command: ${exhaustivenessCheck}`)
+        }
       }
     }
   } catch (rawError) {
