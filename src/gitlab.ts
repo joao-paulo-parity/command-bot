@@ -36,7 +36,7 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
 
   await cmdRunner.run("git", ["add", ".gitlab-ci.yml"])
 
-  await cmdRunner.run("git", ["commit", "-m", "generate GitLab CI"])
+  await cmdRunner.run("git", ["commit", "-m", task.command])
 
   const gitlabRemote = "gitlab"
   const gitlabProjectPath = `${gitlab.pushNamespace}/${task.gitRef.repo}`
