@@ -19,11 +19,8 @@ import { Logger } from "./logger"
 import { CommandOutput, Context, GitRef } from "./types"
 import { displayError, getNextUniqueIncrementalId, intoError } from "./utils"
 
-/*
-  Only useful as a means to know which tasks are alive so that unfinished tasks
-  are not queued twice on requeue attempts
-*/
-export const queuedTasks: Set<string> = new Set()
+export const queuedTasks: Map<string, EventEmitter> = new Map()
+export const taskTerminationEvent = Symbol()
 
 export type TaskGitlabPipeline = {
   id: number
@@ -92,7 +89,9 @@ export const queueTask = async (
     !queuedTasks.has(task.id),
     `Attempted to queue task ${task.id} when it's already registered in the taskMap`,
   )
-  queuedTasks.add(task.id)
+
+  const taskEventChannel = new EventEmitter()
+  queuedTasks.set(task.id, taskEventChannel)
 
   const ctx = {
     ...parentCtx,
@@ -103,8 +102,7 @@ export const queueTask = async (
 
   await db.put(task.id, JSON.stringify(task))
 
-  const taskTerminationEventChannel = new EventEmitter()
-  let terminateTask: (() => Promise<Error | undefined>) | undefined = undefined
+  let terminateTask: (() => Promise<unknown>) | undefined = undefined
   let activeProcess: cp.ChildProcess | undefined = undefined
   let taskIsAlive = true
   const terminate = async () => {
@@ -115,7 +113,7 @@ export const queueTask = async (
         return
       }
       terminateTask = undefined
-      taskTerminationEventChannel.emit("finished")
+      taskEventChannel.emit(taskTerminationEvent)
     }
 
     taskIsAlive = false
@@ -229,7 +227,7 @@ export const queueTask = async (
       }
 
       terminateTask = taskStartResult.terminate
-      await taskStartResult.waitUntilFinished(taskTerminationEventChannel)
+      await taskStartResult.waitUntilFinished(taskEventChannel)
 
       return `${taskStartResult.jobWebUrl} ${
         taskIsAlive ? "was cancelled" : "finished"

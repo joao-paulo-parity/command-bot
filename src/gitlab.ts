@@ -5,7 +5,7 @@ import yaml from "yaml"
 import Joi from "joi"
 
 import { CommandRunner, fsWriteFile } from "./shell"
-import { Task, TaskGitlabPipeline } from "./task"
+import { Task, TaskGitlabPipeline, taskTerminationEvent } from "./task"
 import { Context } from "./types"
 import { validatedFetch } from "./utils"
 
@@ -165,10 +165,8 @@ const getLiveTaskGitlabContext = (
   ctx: Context,
   pipeline: TaskGitlabPipeline,
 ): TaskGitlabPipeline & {
-  terminate: () => Promise<Error | undefined>
-  waitUntilFinished: (
-    taskTerminationEventChannel: EventEmitter,
-  ) => Promise<string | Error>
+  terminate: () => Promise<unknown>
+  waitUntilFinished: (taskEventChannel: EventEmitter) => Promise<unknown>
 } => {
   const { gitlab } = ctx
   return {
@@ -176,14 +174,12 @@ const getLiveTaskGitlabContext = (
     terminate: () => {
       return cancelGitlabPipeline(ctx, pipeline)
     },
-    waitUntilFinished: (taskTerminationEventChannel) => {
+    waitUntilFinished: (taskEventChannel) => {
       return Promise.race([
-        new Promise<string>((resolve) => {
-          taskTerminationEventChannel.on("finished", () => {
-            return resolve("finished")
-          })
+        new Promise<void>((resolve) => {
+          taskEventChannel.on(taskTerminationEvent, resolve)
         }),
-        new Promise<string>((resolve, reject) => {
+        new Promise<void>((resolve, reject) => {
           const pollPipelineCompletion = async () => {
             try {
               const { status: pipelineStatus } = await validatedFetch<{
@@ -196,7 +192,7 @@ const getLiveTaskGitlabContext = (
                 Joi.object().keys({ status: Joi.string().required() }),
               )
               if (isPipelineFinishedStatus(pipelineStatus)) {
-                return resolve(pipelineStatus)
+                return resolve()
               }
               setTimeout(() => {
                 void pollPipelineCompletion()
