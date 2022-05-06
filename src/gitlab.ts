@@ -63,17 +63,11 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     "HEAD",
   ])
 
-  console.log(
-    `https://${gitlab.domain}/api/v4/projects/${encodeURI(
-      gitlabProjectPath,
-    )}/pipeline?ref=${encodeURI(branchName)}`,
-  )
-
   const createdPipeline = (await (
     await fetch(
-      `https://${gitlab.domain}/api/v4/projects/${encodeURI(
+      `https://${gitlab.domain}/api/v4/projects/${encodeURIComponent(
         gitlabProjectPath,
-      )}/pipeline?ref=${encodeURI(branchName)}`,
+      )}/pipeline?ref=${encodeURIComponent(branchName)}`,
       { method: "POST", headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
     )
   ).json()) as unknown as {
@@ -159,10 +153,7 @@ const getLiveTaskGitlabContext = (
               const { status: pipelineStatus } = (await (
                 await fetch(
                   `https://${gitlab.domain}/api/v4/projects/${pipeline.projectId}/pipeline/${pipeline.id}`,
-                  {
-                    method: "POST",
-                    headers: { "PRIVATE-TOKEN": gitlab.accessToken },
-                  },
+                  { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
                 )
               ).json()) as { status: string }
               switch (pipelineStatus) {

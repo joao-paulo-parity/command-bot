@@ -62,6 +62,6 @@
     "start:prefix": "node --es-module-specifier-resolution=node --loader ./loader.cjs",
     "start": "yarn start:prefix ./src/main.ts",
     "dev": "yarn start:prefix --trace-warnings -r ./.env.cjs ./src/main.ts",
-    "watch": "nodemon --watch src --watch env.cjs -e cjs,ts --exec \"yarn dev\""
+    "watch": "nodemon --watch src --watch .env.cjs -e cjs,ts --exec \"yarn dev\""
   }
 }
