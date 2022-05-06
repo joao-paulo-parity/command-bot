@@ -165,7 +165,7 @@ const getLiveTaskGitlabContext = (
   ctx: Context,
   pipeline: TaskGitlabPipeline,
 ): TaskGitlabPipeline & {
-  terminate: () => Promise<unknown>
+  terminate: () => Promise<Error | undefined>
   waitUntilFinished: (taskEventChannel: EventEmitter) => Promise<unknown>
 } => {
   const { gitlab } = ctx
@@ -191,9 +191,11 @@ const getLiveTaskGitlabContext = (
                 ),
                 Joi.object().keys({ status: Joi.string().required() }),
               )
+
               if (isPipelineFinishedStatus(pipelineStatus)) {
                 return resolve()
               }
+
               setTimeout(() => {
                 void pollPipelineCompletion()
               }, 32768)
