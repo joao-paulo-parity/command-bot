@@ -52,7 +52,14 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     `https://token:${gitlab.accessToken}@${gitlab.domain}/${gitlabProjectPath}.git`,
   ])
 
-  await cmdRunner.run("git", ["push", "-o", "ci.skip", gitlabRemote, "HEAD"])
+  await cmdRunner.run("git", [
+    "push",
+    "--force",
+    "-o",
+    "ci.skip",
+    gitlabRemote,
+    "HEAD",
+  ])
 
   const createdPipeline = (await (
     await fetch(
