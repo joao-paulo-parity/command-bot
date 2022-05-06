@@ -287,7 +287,6 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
               body: message,
             })
           }
-
           const queueMessage = await queueTask(ctx, task, {
             onResult: getPostPullRequestResult(ctx, octokit, task),
             updateProgress,

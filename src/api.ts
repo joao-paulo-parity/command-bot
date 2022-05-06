@@ -162,8 +162,10 @@ export const setupApi = (ctx: Context, server: Server) => {
       gitlab: { job, pipeline: null },
     }
 
+    const updateProgress = getSendTaskMatrixResult(matrix, logger, task)
     const queueMessage = await queueTask(ctx, task, {
-      onResult: getSendTaskMatrixResult(matrix, logger, task),
+      onResult: updateProgress,
+      updateProgress,
     })
 
     response(res, next, 201, {

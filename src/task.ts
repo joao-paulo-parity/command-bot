@@ -82,7 +82,7 @@ export const queueTask = async (
     updateProgress,
   }: {
     onResult: (result: CommandOutput) => Promise<unknown>
-    updateProgress?: (message: string) => Promise<unknown>
+    updateProgress: ((message: string) => Promise<unknown>) | null
   },
 ) => {
   assert(
@@ -285,6 +285,12 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
             const requeue = () => {
               return queueTask(ctx, requeuedTask, {
                 onResult: getPostPullRequestResult(ctx, octokit, requeuedTask),
+                /*
+                  Assumes the relevant progress update was already sent when
+                  the task was queued for the first time, thus there's no need
+                  to keep updating it
+                */
+                updateProgress: null,
               })
             }
 
@@ -318,6 +324,12 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
                     logger,
                     requeuedTask,
                   ),
+                  /*
+                    Assumes the relevant progress update was already sent when
+                    the task was queued for the first time, thus there's no need
+                    to keep updating it
+                  */
+                  updateProgress: null,
                 })
               },
             }
