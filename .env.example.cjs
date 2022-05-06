@@ -27,6 +27,13 @@ process.env.CLIENT_SECRET ??= "placeholder"
 
 /*
   Related to the GitLab instance where the commands will be executed
+
+  GITLAB_ACCESS_TOKEN token needs the following scopes:
+  - "write_repository"
+  - "read_api"
+
+  Instructions for generating this token are available at:
+  https://docs.gitlab.com/ee/security/token_overview.html
 */
 process.env.GITLAB_ACCESS_TOKEN ??= "placeholder"
 process.env.GITLAB_DOMAIN ??= "placeholder"
