@@ -14,7 +14,6 @@ import {
   serializeTaskQueuedDate,
 } from "./task"
 import { Context } from "./types"
-import { displayCommand } from "./utils"
 
 const getApiRoute = (route: string) => {
   return `/api${route}`
@@ -125,11 +124,14 @@ export const setupApi = (ctx: Context, server: Server) => {
     const validateQueueEndpointInput = ajv.compile({
       type: "object",
       properties: {
-        execPath: { type: "string" },
-        args: { type: "array", items: { type: "string" } },
-        env: {
+        command: { type: "string" },
+        job: {
           type: "object",
-          patternProperties: { ".*": { type: "string" } },
+          properties: {
+            tags: { type: "array", items: { type: "string" } },
+            image: { type: "string" },
+          },
+          required: ["tags", "image"],
         },
         gitRef: {
           type: "object",
@@ -141,9 +143,8 @@ export const setupApi = (ctx: Context, server: Server) => {
           },
           required: ["contributor", "owner", "repo", "branch"],
         },
-        secretsToHide: { type: "array", items: { type: "string" } },
       },
-      required: ["execPath", "args", "gitRef"],
+      required: ["command", "job", "gitRef"],
       additionalProperties: false,
     })
     const isInputValid = (await validateQueueEndpointInput(req.body)) as boolean
@@ -151,23 +152,11 @@ export const setupApi = (ctx: Context, server: Server) => {
       return errorResponse(res, next, 400, validateQueueEndpointInput.errors)
     }
 
-    type Payload = Pick<ApiTask, "execPath" | "args" | "gitRef"> & {
-      env?: ApiTask["env"]
-      secretsToHide?: string[]
+    type Payload = Pick<ApiTask, "gitRef" | "command"> & {
+      job: ApiTask["gitlab"]["job"]
     }
-    const {
-      execPath,
-      args,
-      gitRef,
-      secretsToHide = [],
-      env = {},
-    } = req.body as Payload
+    const { command, job, gitRef } = req.body as Payload
 
-    const commandDisplay = displayCommand({
-      execPath,
-      args,
-      itemsToRedact: secretsToHide,
-    })
     const taskId = getNextTaskId()
     const queuedDate = new Date()
 
@@ -177,16 +166,13 @@ export const setupApi = (ctx: Context, server: Server) => {
       timesRequeued: 0,
       timesRequeuedSnapshotBeforeExecution: 0,
       timesExecuted: 0,
-      commandDisplay,
-      execPath,
-      args,
-      env,
       gitRef,
       matrixRoom,
       repoPath: path.join(repositoryCloneDirectory, gitRef.repo),
       queuedDate: serializeTaskQueuedDate(queuedDate),
       requester: matrixRoom,
-      gitlab: null,
+      command,
+      gitlab: { job, pipeline: null },
     }
 
     const message = await queueTask(ctx, task, {

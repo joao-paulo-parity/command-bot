@@ -4,34 +4,15 @@ import path from "path"
 import yaml from "yaml"
 
 import { CommandRunner, fsWriteFile } from "./shell"
-import { Task, TaskGitlabContext } from "./task"
+import { Task, TaskGitlabPipeline } from "./task"
 import { Context } from "./types"
 
-type GitlabJobOptions = {
-  image: string
-  tags: string[]
-}
+const runCommandBranchPrefix = "ci-exec/"
 
-export const runCommandInGitlabPipeline = async (
-  ctx: Context,
-  task: Task,
-  jobOptions: GitlabJobOptions,
-  {
-    branchPrefix,
-  }: {
-    branchPrefix: string
-  },
-) => {
-  const { execPath, args } = task
+export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
   await fsWriteFile(
     path.join(task.repoPath, ".gitlab-ci.yml"),
-    yaml.stringify({
-      command: {
-        ...jobOptions,
-        script: [`${execPath} ${args.join(" ")}`],
-        variables: task.env,
-      },
-    }),
+    yaml.stringify({ command: { ...task.gitlab.job, script: [task.command] } }),
   )
 
   const { gitlab } = ctx
@@ -41,7 +22,7 @@ export const runCommandInGitlabPipeline = async (
     cwd: task.repoPath,
   })
 
-  const branchName = `${branchPrefix}/${
+  const branchName = `${runCommandBranchPrefix}/${
     "prNumber" in task.gitRef ? task.gitRef.prNumber : task.gitRef.branch
   }`
   await cmdRunner.run("git", ["branch", "-D", branchName], {
@@ -87,12 +68,9 @@ export const runCommandInGitlabPipeline = async (
   }
 
   return getLiveTaskGitlabContext(ctx, {
-    pipeline: {
-      id: createdPipeline.id,
-      projectId: createdPipeline.project_id,
-      status: "pending",
-      webUrl: createdPipeline.web_url,
-    },
+    id: createdPipeline.id,
+    projectId: createdPipeline.project_id,
+    webUrl: createdPipeline.web_url,
   })
 }
 
@@ -113,7 +91,7 @@ const cancelGitlabPipeline = async (
 }
 
 export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
-  if (!task.gitlab) {
+  if (!task.gitlab.pipeline) {
     return
   }
 
@@ -133,23 +111,21 @@ export const restoreTaskGitlabContext = async (ctx: Context, task: Task) => {
     }
   }
 
-  return getLiveTaskGitlabContext(ctx, task.gitlab)
+  return getLiveTaskGitlabContext(ctx, task.gitlab.pipeline)
 }
 
 const getLiveTaskGitlabContext = (
   ctx: Context,
-  taskGitlabCtx: TaskGitlabContext,
-): TaskGitlabContext & {
+  pipeline: TaskGitlabPipeline,
+): TaskGitlabPipeline & {
   terminate: () => Promise<Error | undefined>
   waitUntilFinished: (
     taskTerminationEventChannel: EventEmitter,
   ) => Promise<string | Error>
 } => {
   const { gitlab } = ctx
-  const { pipeline } = taskGitlabCtx
-
   return {
-    ...taskGitlabCtx,
+    ...pipeline,
     terminate: () => {
       return cancelGitlabPipeline(ctx, pipeline)
     },

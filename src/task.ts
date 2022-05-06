@@ -13,20 +13,12 @@ import { getPostPullRequestResult, updateComment } from "./github"
 import { restoreTaskGitlabContext, runCommandInGitlabPipeline } from "./gitlab"
 import { Logger } from "./logger"
 import { CommandOutput, Context, GitRef } from "./types"
-import {
-  displayError,
-  escapeHtml,
-  getNextUniqueIncrementalId,
-  intoError,
-} from "./utils"
+import { displayError, getNextUniqueIncrementalId, intoError } from "./utils"
 
-export type TaskGitlabContext = {
-  pipeline: {
-    id: number
-    projectId: number
-    status: "pending" | "cancelled"
-    webUrl: string
-  }
+export type TaskGitlabPipeline = {
+  id: number
+  projectId: number
+  webUrl: string
 }
 type TaskBase<T> = {
   tag: T
@@ -35,14 +27,17 @@ type TaskBase<T> = {
   timesRequeued: number
   timesRequeuedSnapshotBeforeExecution: number
   timesExecuted: number
-  commandDisplay: string
-  execPath: string
-  args: string[]
-  env: Record<string, string>
   gitRef: GitRef
   repoPath: string
   requester: string
-  gitlab: TaskGitlabContext | null
+  gitlab: {
+    job: {
+      tags: string[]
+      image: string
+    }
+    pipeline: TaskGitlabPipeline | null
+  }
+  command: string
 }
 
 export type PullRequestTask = TaskBase<"PullRequestTask"> & {
@@ -204,28 +199,22 @@ export const queueTask = async (
             return cancelledMessage
           }
 
-          const taskGitlabCtx = await runCommandInGitlabPipeline(
-            ctx,
-            task,
-            {
-              image: "paritytech/ci-linux:production",
-              tags: ["linux-docker-benches", "linux-docker"],
-            },
-            { branchPrefix: "try-runtime" },
-          )
+          const pipelineCtx = await runCommandInGitlabPipeline(ctx, task)
 
-          task.gitlab = taskGitlabCtx
+          task.gitlab.pipeline = {
+            id: pipelineCtx.id,
+            webUrl: pipelineCtx.webUrl,
+            projectId: pipelineCtx.projectId,
+          }
           await db.put(task.id, JSON.stringify(task))
-
-          const { pipeline } = taskGitlabCtx
 
           if (updateProgress) {
             await updateProgress(
-              `@${task.requester} ${pipeline.webUrl} was started`,
+              `@${task.requester} ${pipelineCtx.webUrl} was started`,
             )
           }
 
-          return taskGitlabCtx
+          return pipelineCtx
         })())
 
       if (
@@ -238,7 +227,7 @@ export const queueTask = async (
       terminateTask = taskStartResult.terminate
       await taskStartResult.waitUntilFinished(taskTerminationEventChannel)
 
-      return `${taskStartResult.pipeline.webUrl} ${
+      return `${taskStartResult.webUrl} ${
         taskIsAlive ? "was cancelled" : "finished"
       }`
     } catch (error) {
@@ -386,39 +375,16 @@ export const requeueUnterminatedTasks = async (ctx: Context, bot: Probot) => {
 export const getSendTaskMatrixResult = (
   matrix: MatrixClient,
   logger: Logger,
-  { id: taskId, matrixRoom, commandDisplay }: ApiTask,
+  task: ApiTask,
 ) => {
   return async (message: CommandOutput) => {
     try {
-      const fileName = `${taskId}-log.txt`
-      const buf = message instanceof Error ? displayError(message) : message
-      const messagePrefix = `Task ID ${taskId} has finished.`
-
-      const lineCount = (buf.match(/\n/g) || "").length + 1
-      if (lineCount < 128) {
-        await matrix.sendHtmlText(
-          matrixRoom,
-          `${messagePrefix} Results will be displayed inline for <code>${escapeHtml(
-            commandDisplay,
-          )}</code>\n<hr>${escapeHtml(buf)}`,
-        )
-        return
-      }
-
-      const url = await matrix.uploadContent(
-        Buffer.from(message instanceof Error ? displayError(message) : message),
-        "text/plain",
-        fileName,
-      )
       await matrix.sendText(
-        matrixRoom,
-        `${messagePrefix} Results were uploaded as ${fileName} for ${commandDisplay}.`,
+        task.matrixRoom,
+        `Task ID ${task.id} has finished with message "${
+          message instanceof Error ? displayError(message) : message
+        }"`,
       )
-      await matrix.sendMessage(matrixRoom, {
-        msgtype: "m.file",
-        body: fileName,
-        url,
-      })
     } catch (rawError) {
       const error = intoError(rawError)
       logger.error(

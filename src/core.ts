@@ -1,6 +1,3 @@
-import assert from "assert"
-
-import { botPullRequestCommentMention } from "./bot"
 import { ExtendedOctokit, isOrganizationMember } from "./github"
 import { CommandRunner } from "./shell"
 import { Task } from "./task"

@@ -19,11 +19,11 @@ import {
   serializeTaskQueuedDate,
 } from "./task"
 import { Context, PullRequestError } from "./types"
-import { displayCommand, displayError, getLines } from "./utils"
+import { displayError, getLines } from "./utils"
 
 export const botPullRequestCommentMention = "/run"
 
-type ParsedBotCommandLine = {
+type ParsedBotCommand = {
   jobTags: string[]
   command: string
   subCommand: "queue" | "cancel"
@@ -38,15 +38,18 @@ export const parsePullRequestBotCommandLine = (rawCommandLine: string) => {
   commandLine = commandLine.slice(botPullRequestCommentMention.length).trim()
 
   const subCommand = (() => {
-    const match = /^\w+/.exec(commandLine)
-    switch (match?.[0]) {
+    const nextToken = /^\w+/.exec(commandLine)?.[0]
+    if (!nextToken) {
+      return new Error(`Must provide a subcommand in line ${rawCommandLine}.`)
+    }
+    switch (nextToken) {
       case "cancel":
       case "queue": {
-        return match[0]
+        return nextToken
       }
       default: {
         return new Error(
-          `Invalid subcommand "${match?.[0]}" in line ${rawCommandLine}.`,
+          `Invalid subcommand "${nextToken}" in line ${rawCommandLine}.`,
         )
       }
     }
@@ -54,6 +57,8 @@ export const parsePullRequestBotCommandLine = (rawCommandLine: string) => {
   if (subCommand instanceof Error) {
     return subCommand
   }
+
+  commandLine = commandLine.slice(subCommand.length)
 
   const startOfArgs = " $ "
   const indexOfArgsStart = commandLine.indexOf(startOfArgs)
@@ -85,7 +90,7 @@ export const parsePullRequestBotCommandLine = (rawCommandLine: string) => {
 
   const jobTags = (options.get("-t") ?? []).concat(options.get("--tag") ?? [])
 
-  if (jobTags?.length ?? 0 === 0) {
+  if ((jobTags?.length ?? 0) === 0) {
     return new Error(
       `Unable to parse job tags from command line ${botOptionsLinePart}`,
     )
@@ -162,7 +167,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
   }
 
   try {
-    let botCommand: ParsedBotCommandLine | undefined = undefined
+    let parsedCommand: ParsedBotCommand | undefined = undefined
     for (const line of getLines(comment.body)) {
       const parsedLine = parsePullRequestBotCommandLine(line)
 
@@ -174,11 +179,11 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
         return getError(parsedLine.message)
       }
 
-      botCommand = parsedLine
+      parsedCommand = parsedLine
       break
     }
 
-    if (botCommand === undefined) {
+    if (parsedCommand === undefined) {
       return
     }
 
@@ -188,7 +193,7 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
       )
     }
 
-    switch (botCommand.subCommand) {
+    switch (parsedCommand.subCommand) {
       case "queue": {
         const installationId = installation?.id
         if (!installationId) {
@@ -244,40 +249,14 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
         }
         commentId = commentCreationResponse.id
 
-        const parsedArgs = parsePullRequestBotCommandArgs(ctx, otherArgs)
-        if (typeof parsedArgs === "string") {
-          return getError(parsedArgs)
-        }
-
         const queuedDate = new Date()
-
-        const execPath = "cargo"
-        const args = [
-          "run",
-          /*
-            Application requirement: always run the command in release mode.
-            See https://github.com/paritytech/try-runtime-bot/issues/26#issue-1049555966
-          */
-          "--release",
-          /*
-            "--quiet" should be kept so that the output doesn't get polluted
-            with a bunch of compilation stuff; bear in mind the output is posted
-            on Github comments which have limited character count
-          */
-          "--quiet",
-          "--features=try-runtime",
-          "try-runtime",
-          ...parsedArgs,
-        ]
 
         const task: PullRequestTask = {
           ...pr,
           id: getNextTaskId(),
           tag: "PullRequestTask",
           requester,
-          execPath,
-          args,
-          env: botCommand.env,
+          command: parsedCommand.command,
           commentId,
           installationId,
           gitRef: {
@@ -292,7 +271,13 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
           timesExecuted: 0,
           repoPath: path.join(repositoryCloneDirectory, pr.repo),
           queuedDate: serializeTaskQueuedDate(queuedDate),
-          gitlab: null,
+          gitlab: {
+            job: {
+              tags: parsedCommand.jobTags,
+              image: "paritytech/ci-linux:production",
+            },
+            pipeline: null,
+          },
         }
 
         await queueTask(ctx, task, {
@@ -343,7 +328,9 @@ const onIssueCommentCreated: WebhookHandler<"issue_comment.created"> = async (
         break
       }
       default: {
-        return getError(`Invalid sub-command: ${subCommand}`)
+        const exhaustivenessCheck: never = parsedCommand.subCommand
+        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        return getError(`Invalid sub-command: ${exhaustivenessCheck}`)
       }
     }
   } catch (rawError) {

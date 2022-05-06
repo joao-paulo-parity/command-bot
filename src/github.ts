@@ -4,7 +4,6 @@ import { EndpointInterface, Endpoints, RequestInterface } from "@octokit/types"
 import { Mutex } from "async-mutex"
 import { Probot } from "probot"
 
-import { getDeploymentsLogsMessage } from "./core"
 import { PullRequestTask } from "./task"
 import { CommandOutput, Context } from "./types"
 import { displayError, Err, millisecondsDelay, Ok } from "./utils"
@@ -297,11 +296,11 @@ export const getPostPullRequestResult = (
       const {
         gitRef: { owner, repo, prNumber: prNumber },
         requester,
-        commandDisplay,
+        command,
       } = task
 
       const before = `
-@${requester} Results are ready for:\n\n  \`${commandDisplay}\`
+@${requester} Results are ready for:\n\n  \`${command}\`
 
 <details>
 <summary>Output</summary>
@@ -323,9 +322,7 @@ export const getPostPullRequestResult = (
         before.length + resultDisplay.length + after.length >
         githubCommentCharacterLimit
       ) {
-        truncateMessageWarning = `\n---\nThe command's output was too big to be fully displayed. ${getDeploymentsLogsMessage(
-          ctx,
-        )}.`
+        truncateMessageWarning = `\n---\nThe command's output was too big to be fully displayed.`
         const truncationIndicator = "[truncated]..."
         resultDisplay = `${resultDisplay.slice(
           0,
