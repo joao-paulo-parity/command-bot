@@ -63,7 +63,7 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
     "HEAD",
   ])
 
-  const createdPipeline = (await (
+  const pipeline = (await (
     await fetch(
       `https://${gitlab.domain}/api/v4/projects/${encodeURIComponent(
         gitlabProjectPath,
@@ -73,15 +73,27 @@ export const runCommandInGitlabPipeline = async (ctx: Context, task: Task) => {
   ).json()) as unknown as {
     id: number
     project_id: number
-    web_url: string
   }
 
-  logger.info(createdPipeline, `Created pipeline for task ${task.id}`)
+  logger.info(pipeline, `Created pipeline for task ${task.id}`)
+
+  const [job] = (await (
+    await fetch(
+      `https://${gitlab.domain}/api/v4/projects/${pipeline.project_id}/pipeline/${pipeline.id}/jobs`,
+      { headers: { "PRIVATE-TOKEN": gitlab.accessToken } },
+    )
+  ).json()) as unknown as [
+    {
+      id: number
+      web_url: string
+    },
+  ]
+  logger.info(job, `Created job for task ${task.id}`)
 
   return getLiveTaskGitlabContext(ctx, {
-    id: createdPipeline.id,
-    projectId: createdPipeline.project_id,
-    webUrl: createdPipeline.web_url,
+    id: pipeline.id,
+    projectId: pipeline.project_id,
+    jobWebUrl: job.web_url,
   })
 }
 

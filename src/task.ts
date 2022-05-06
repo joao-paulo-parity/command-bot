@@ -19,7 +19,7 @@ import { Logger } from "./logger"
 import { CommandOutput, Context, GitRef } from "./types"
 import { displayError, getNextUniqueIncrementalId, intoError } from "./utils"
 
-/* 
+/*
   Only useful as a means to know which tasks are alive so that unfinished tasks
   are not queued twice on requeue attempts
 */
@@ -28,7 +28,7 @@ export const queuedTasks: Set<string> = new Set()
 export type TaskGitlabPipeline = {
   id: number
   projectId: number
-  webUrl: string
+  jobWebUrl: string
 }
 type TaskBase<T> = {
   tag: T
@@ -207,14 +207,14 @@ export const queueTask = async (
 
           task.gitlab.pipeline = {
             id: pipelineCtx.id,
-            webUrl: pipelineCtx.webUrl,
+            jobWebUrl: pipelineCtx.jobWebUrl,
             projectId: pipelineCtx.projectId,
           }
           await db.put(task.id, JSON.stringify(task))
 
           if (updateProgress) {
             await updateProgress(
-              `@${task.requester} ${pipelineCtx.webUrl} was started`,
+              `@${task.requester} ${pipelineCtx.jobWebUrl} was started`,
             )
           }
 
@@ -231,7 +231,7 @@ export const queueTask = async (
       terminateTask = taskStartResult.terminate
       await taskStartResult.waitUntilFinished(taskTerminationEventChannel)
 
-      return `${taskStartResult.webUrl} ${
+      return `${taskStartResult.jobWebUrl} ${
         taskIsAlive ? "was cancelled" : "finished"
       }`
     } catch (error) {
